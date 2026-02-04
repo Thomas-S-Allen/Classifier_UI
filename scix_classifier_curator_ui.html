@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SciX Classifier Curator Dashboard (Beta)</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <style>
+    :root{
+      --bg:#fbfbf7;
+      --card:#ffffff;
+      --ink:#121212;
+      --muted:#60646c;
+      --line:#e6e6e0;
+      --accent:#1a73e8;
+      --good:#1a7f37;
+      --warn:#b54708;
+      --bad:#b42318;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      --radius:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:var(--sans); color:var(--ink); background:var(--bg); }
+
+    header{
+      position:sticky; top:0; z-index:10;
+      background:#ffffff;border-bottom:1px solid var(--line);
+    }
+    .wrap{ max-width:1600px; margin:0 auto; padding:14px 16px; }
+    .brand{ display:flex; align-items:center; gap:10px; }
+    .dot{ width:10px; height:10px; border-radius:50%; background:var(--accent); }
+    h1{ font-size:16px; margin:0; letter-spacing:.2px; }
+    .sub{ font-size:12px; color:var(--muted); margin-top:2px; }
+
+    .logo{ height:200px; width:auto; display:block; margin-left:-24px; }
+    @media (max-width:700px){ .logo{ height:150px; margin-left:-12px; } }
+
+    .grid{
+      max-width:1600px;
+      margin:0 auto;
+      padding:16px;
+      display:grid;
+      grid-template-columns:420px minmax(0, 1fr);
+      gap:14px;
+    }
+    @media (max-width:980px){
+      .grid{ grid-template-columns:1fr; }
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow: 0 1px 0 rgba(0,0,0,0.03);
+      overflow:hidden;
+    }
+    .card h2{
+      margin:0;
+      font-size:14px;
+      padding:12px 12px 10px;
+      border-bottom:1px solid var(--line);
+      background:linear-gradient(#fff, #fcfcfa);
+    }
+    .card .content{ padding:12px; }
+
+    .row{ display:flex; gap:10px; flex-wrap:wrap; }
+    .row > *{ flex:1; min-width: 140px; }
+
+    label{
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin:0 0 6px;
+    }
+    input, select, button, textarea{
+      width:100%;
+      padding:10px 10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      font-family:var(--sans);
+      font-size:14px;
+      background:#fff;
+      outline:none;
+    }
+    textarea{ min-height: 110px; font-family: var(--mono); font-size:12px; }
+    input:focus, select:focus, textarea:focus{
+      border-color: rgba(26,115,232,.35);
+      box-shadow: 0 0 0 3px rgba(26,115,232,.12);
+    }
+
+    .btn{
+      background:var(--accent);
+      color:#fff;
+      border:none;
+      cursor:pointer;
+      font-weight:600;
+    }
+    .btn:active{ transform: translateY(1px); }
+    .btn.secondary{
+      background:#fff;
+      color:var(--ink);
+      border:1px solid var(--line);
+    }
+    button:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+      box-shadow:none;
+    }
+    button:disabled:active{ transform:none; }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      padding:5px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      font-size:12px;
+      color:var(--ink);
+      background:#fff;
+      margin:3px 6px 0 0;
+      white-space:nowrap;
+    }
+
+    .table{
+      width:100%;
+      border-collapse:separate;
+      border-spacing:0;
+      overflow:hidden;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+    }
+    .table th, .table td{
+      padding:10px 10px;
+      border-bottom:1px solid var(--line);
+      vertical-align:top;
+      font-size:13px;
+    }
+    .table th{
+      font-size:12px;
+      color:var(--muted);
+      text-align:left;
+      background:#fcfcfa;
+    }
+    .table tr:last-child td{ border-bottom:none; }
+    .table tr{ cursor:pointer; }
+    .table tr:hover td{ background:#fafafa; }
+    .table tr.active td{ background: rgba(26,115,232,.08); }
+
+    .kv{
+      display:grid;
+      grid-template-columns: 110px 1fr;
+      gap:6px 10px;
+      font-size:13px;
+    }
+    .kv div:nth-child(odd){ color:var(--muted); }
+
+    #scoresList{ overflow-x:auto; padding-right:4px; }
+    .scoreRow{
+      display:grid;
+      grid-template-columns: minmax(0, 1fr) 72px;
+      gap:10px;
+      align-items:center;
+      margin:8px 0;
+    }
+    .bar{
+      height:10px;
+      border-radius:999px;
+      background:#f1f3f5;
+      border:1px solid var(--line);
+      overflow:hidden;
+    }
+    .bar > span{
+      display:block;
+      height:100%;
+      width:0%;
+      background: var(--accent);
+    }
+
+    .small{ font-size:12px; color:var(--muted); }
+    .mono{ font-family:var(--mono); }
+
+    .checks{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:8px 10px;
+      margin-top:10px;
+    }
+    .check{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-size:13px;
+      padding:8px 10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+      user-select:none;
+    }
+    .check input{ width:auto; }
+
+    .status{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top:8px;
+    }
+    .tag{
+      font-size:12px;
+      padding:5px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fff;
+    }
+    .tag.good{ border-color: rgba(26,127,55,.25); background: rgba(26,127,55,.06); color: var(--good); }
+    .tag.warn{ border-color: rgba(181,71,8,.25); background: rgba(181,71,8,.06); color: var(--warn); }
+    .tag.bad{ border-color: rgba(180,35,24,.25); background: rgba(180,35,24,.06); color: var(--bad); }
+
+    .rightActions{
+      display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;
+    }
+    .rightActions > button{ flex: 1; min-width: 160px; }
+
+    .toast{
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #111;
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show{ opacity: .92; transform: translateX(-50%) translateY(-4px); }
+
+    .infobox{
+      margin-top:10px;
+      padding:10px 12px;
+      border:1px solid rgba(26,115,232,.22);
+      border-radius:12px;
+      background: rgba(26,115,232,.06);
+      color: var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+    .warnbox{
+      margin-top:10px;
+      padding:10px 12px;
+      border:1px dashed rgba(181,71,8,.35);
+      border-radius:12px;
+      background: rgba(181,71,8,.06);
+      color: var(--warn);
+      font-size:12px;
+      line-height:1.35;
+    }
+
+    .reviewStack{ padding:12px; }
+    .editorPanel{
+      margin-top:12px;
+      border-top:1px solid var(--line);
+      padding-top:12px;
+      display:none;
+    }
+    .editorPanelHeader{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:8px;
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <div>
+        <h1 style="display:flex; align-items:center; gap:10px;"><a href="./" aria-label="Home" style="display:inline-block; line-height:0;"><img src="assets/logo.png" alt="SciX Classifier Curator Dashboard" class="logo" /></a></h1></h1>
+        </div>
+    </div>
+  </div>
+</header>
+
+<main class="grid">
+  
+  <section class="card" aria-label="Query pane">
+    <h2>Query</h2>
+    <div class="content">
+      <div style="margin-top:12px; padding-top:2px;">
+        <div class="small" style="margin-bottom:8px;"><strong>Option A: Load a bibcode</strong></div>
+        <div class="row">
+          <div>
+            <label for="bibcode">Bibcode</label>
+            <input id="bibcode" placeholder="e.g., 2017ApJ...845..161A" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="loadBibcode">Load record</button>
+          <button class="btn secondary" id="reset" title="Clear">Reset</button>
+        </div>
+</div>
+
+      <div class="infobox" style="margin-top:10px;">
+        <strong>Load a single record (Option A):</strong>
+        Use this when you already know the bibcode and want to look closely at one specific record.
+        In this beta, the record is pulled from a local <span class="mono">&lt;BIBCODE&gt;.json</span> file.
+        In the real Django app, this will just load the record straight from the database.
+      </div>
+      </div>
+
+      <div style="margin-bottom:14px;"></div>
+
+      <div style="margin-top:18px; border-top:1px solid var(--line); padding-top:20px; padding-left:12px; padding-right:12px;">
+                <div class="small" style="margin-bottom:8px;"><strong>Option B: Search by Collection Score Range</strong></div>
+<div>
+          <div class="small" style="margin-bottom:6px;"><strong>Collection Score Range</strong></div>
+          <div class="row">
+            <div>
+              <label for="category">Collection</label>
+              <select id="category"></select>
+            </div>
+            <div>
+              <label for="scoreMin">Score min</label>
+              <input id="scoreMin" type="number" min="0" max="1" step="0.0001" placeholder="0.0" />
+            </div>
+            <div>
+              <label for="scoreMax">Score max</label>
+              <input id="scoreMax" type="number" min="0" max="1" step="0.0001" placeholder="1.0" />
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <div class="small" style="margin-bottom:6px;"><strong>Date Range</strong></div>
+          <div class="row">
+            <div>
+              <label for="startDate">Start date</label>
+              <input id="startDate" type="date" />
+            </div>
+            <div>
+              <label for="endDate">End date</label>
+              <input id="endDate" type="date" />
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px;">
+          <button class="btn secondary" id="runQuery">Run search</button>
+        </div>
+        <div style="margin-bottom:16px;"></div>
+
+        <div style="margin-top:10px;"></div>
+
+        <div class="infobox" style="margin-top:18px;">
+          <strong>Search by collection score and/or date range (Option B):</strong>
+          Use this when you want to explore a set of records rather than a single one.
+          Filter by model score, date range, or both to spot borderline cases,
+          odd assignments, or places where the classifier might need a human check.
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button class="btn secondary" id="loadExamples">Load example dataset</button>
+        </div>
+</div>
+
+      </div>
+
+      <div class="warnbox" id="fileWarn" style="display:none;">
+        <strong>Heads up:</strong> demo JSON loading uses <span class="mono">fetch()</span>.
+        Some browsers block <span class="mono">fetch()</span> when opening the HTML as <span class="mono">file:
+        If demo loading fails, serve this folder (e.g., <span class="mono">python -m http.server</span>) and open <span class="mono">http:
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Review pane">
+    <h2>Review</h2>
+    <div class="reviewStack">
+      <div>
+        <div class="status">
+          <span class="tag" id="resultCount">0 results</span>
+          <span class="tag" id="selectedTag">No record selected</span>
+          <span class="tag good" id="overrideTag" style="display:none;">Override applied</span>
+          <span class="tag warn" id="sourceTag" style="display:none;">Demo JSON</span>
+</div>
+
+        <div style="margin-top:10px; overflow:auto;">
+          <table class="table" id="resultsTable" aria-label="Results table">
+            <thead>
+              <tr>
+                <th>Bibcode</th>
+                <th style="width:180px;">Scores</th>
+                <th style="width:200px;">Collection(s)</th>
+                <th style="width:110px;">Update</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+
+        <div id="paginationBottom" style="margin-top:10px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;"></div>
+
+        <div class="small" style="margin-top:10px; line-height:1.35;">
+          Overrides are kept in-memory in this beta UI.
+        </div>
+      </div>
+
+      <div class="editorPanel" id="editorPanel">
+        <div class="editorPanelHeader">
+          <div class="small"><strong>Record details</strong></div>
+          <div class="small mono" id="editorBibcode"></div>
+        </div>
+
+        <div class="content" style="padding:0;">
+          <div class="kv" id="kv"></div>
+
+          <div style="margin-top:12px;">
+            <div class="small" style="margin-bottom:6px;"><strong>All model scores</strong></div>
+            <div id="scoresList"></div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <div class="small"><strong>Curator override</strong> (choose one or more collections)</div>
+            <div class="checks" id="overrideChecks"></div>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn" id="applyOverride" disabled>Update override</button>
+              <button class="btn secondary" id="clearOverride" disabled>Clear override</button>
+            </div>
+          </div>
+
+          <div class="rightActions" id="postOverrideActions" style="display:none;">
+            <button class="btn secondary" id="exportOverrides" disabled>Export override JSON</button>
+            <button class="btn secondary" id="copySelected" disabled>Copy override (JSON)</button>
+          </div>
+          <div class="small" id="postOverrideHint" style="display:none; margin-top:6px; line-height:1.35;">
+            Available after you update an override for this record.
+          </div>
+
+          <div style="margin-top:14px;">
+            <label for="rawJson">Raw JSON (selected record)</label>
+            <textarea id="rawJson" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const API_ENDPOINT = null;
+
+function toast(msg){
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  window.clearTimeout(toast._t);
+  toast._t = window.setTimeout(()=>el.classList.remove("show"), 1400);
+}
+
+function clamp01(x){
+  const s = (x ?? "").toString().trim();
+  if (s === "") return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+function parseDateMs(d){
+  if (!d) return null;
+  const t = Date.parse(d);
+  return Number.isFinite(t) ? t : null;
+}
+function escapeHtml(s){
+  return String(s)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+const DISPLAY_ORDER = [
+  "astrophysics",
+  "planetary",
+  "heliophysics",
+  "earthscience",
+  "physics",
+  "NASA-funded Biophysics",
+  "general",
+  "Text Garbage"
+];
+
+const DISPLAY_LABEL = {
+  "astrophysics": "Astronomy",
+  "planetary": "Planetary Science",
+  "heliophysics": "Heliophysics",
+  "earthscience": "Earth Science",
+  "physics": "Physics",
+  "NASA-funded Biophysics": "Biology",
+  "general": "General",
+  "Text Garbage": "Other"
+};
+
+const COLLECTION_EMOJI = {
+  astrophysics: "🔭",
+  planetary: "🪐",
+  heliophysics: "🌞",
+  earthscience: "🌍",
+  physics: "⚛️",
+  "NASA-funded Biophysics": "🧬",
+  general: "🧠",
+  "Text Garbage": "❓"
+};
+
+
+function displayNameFor(key){
+  const emoji = COLLECTION_EMOJI[key] || "";
+  const lbl = DISPLAY_LABEL[key] || key;
+  return emoji ? `${emoji} ${lbl}` : lbl;
+}
+
+function renderPills(items){
+  return (items || []).map(k => {
+    const lbl = DISPLAY_LABEL[k] || k;
+    const emoji = COLLECTION_EMOJI[k] || "";
+    const text = emoji ? `${emoji} ${lbl}` : lbl;
+    return `<span class="pill" title="${escapeHtml(k)}">${escapeHtml(text)}</span>`;
+  }).join("");
+}
+
+
+function buildDbPayload(rec){
+  const scores = rec.scores_payload?.scores || {};  const override = Array.isArray(rec.override) ? rec.override : [];
+  const finalCollection = computeFinalCollections(rec);
+return {
+    bibcode: rec.bibcode,
+    override: override,
+    final_collection: finalCollection,    scores: scores,
+    earth_science_adjustment: !!rec.scores_payload?.earth_science_adjustment,  };
+}
+
+async function postOverrideToApi(rec){
+  if (typeof API_ENDPOINT !== "string") return false;
+  const url = API_ENDPOINT.trim();
+  if (!url) return false;
+
+  const payload = buildDbPayload(rec);
+
+  try{
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return true;
+  } catch(e){
+    return false;
+  }
+}
+
+function computeFinalCollections(rec){
+  const ov = Array.isArray(rec.override) ? rec.override : [];
+  return ov.length ? ov : (rec.scores_payload?.collections || []);
+}
+
+function normalizeRecord(rec){
+  const scores_payload = rec.scores_payload || rec; 
+  return {
+    bibcode: rec.bibcode,    journal: rec.journal ?? null,    scores_payload: {
+      scores: scores_payload.scores || {},
+      earth_science_adjustment: !!scores_payload.earth_science_adjustment,
+      collections: Array.isArray(scores_payload.collections) ? scores_payload.collections : []
+    },
+    override: Array.isArray(rec.override) ? rec.override : []
+  };
+}
+
+let DATA = [];
+const PAGE_SIZE = 10;
+let state = { filtered: [], selectedBibcode: null, page: 1 };
+
+function setSourceBadge(show){
+  $("sourceTag").style.display = show ? "inline-flex" : "none";
+}
+
+function clearAll(){
+  $("bibcode").value = "";
+  DATA = [];
+  state.filtered = [];
+  state.selectedBibcode = null;
+  state.page = 1;
+  setSourceBadge(false);
+  if ($("scoreMin")) $("scoreMin").value = "";
+  if ($("scoreMax")) $("scoreMax").value = "";
+  if ($("startDate")) $("startDate").value = "";
+  if ($("endDate")) $("endDate").value = "";
+  if ($("category")) $("category").value = "astrophysics";
+  renderResults();
+  clearEditor();
+  toast("Cleared.");
+}
+
+function runQuery(){
+  if (!DATA.length){
+    if (!runQuery._autoload){
+      runQuery._autoload = true;
+      loadExamples();
+      return;
+    }
+    toast("No records loaded. Load a bibcode or the example dataset first.");
+    return;
+  }
+
+  const cat = $("category") ? $("category").value : "astrophysics";
+  const min = clamp01($("scoreMin")?.value);
+  const max = clamp01($("scoreMax")?.value);
+  const start = parseDateMs($("startDate")?.value || "");
+  const end = parseDateMs($("endDate")?.value || "");
+
+  let lo = min, hi = max;
+  if (lo != null && hi != null && lo > hi){ const t = lo; lo = hi; hi = t; }
+
+  state.page = 1;
+
+  state.filtered = DATA.filter(rec => {
+    const scores = rec.scores_payload?.scores || {};
+    const v = (typeof scores[cat] === "number") ? scores[cat] : 0;
+    if (lo != null && v < lo) return false;
+    if (hi != null && v > hi) return false;
+
+    const t = parseDateMs(rec.pubDate || "");
+    if (start != null && t != null && t < start) return false;
+    if (end != null && t != null && t > (end + 24*60*60*1000)) return false;
+    return true;
+  });
+
+  if (state.selectedBibcode && !state.filtered.some(r => r.bibcode === state.selectedBibcode)){
+    state.selectedBibcode = null;
+    clearEditor();
+  }
+
+  renderResults();
+  toast(`Found ${state.filtered.length} record(s).`);
+}
+
+function renderResults(){
+  const total = state.filtered.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (state.page < 1) state.page = 1;
+  if (state.page > pages) state.page = pages;
+
+  $("resultCount").textContent = `${total} result(s)`;
+
+  const tbody = $("resultsBody");
+  tbody.innerHTML = "";
+
+  const selectedCat = $("category") ? $("category").value : "astrophysics";
+
+  const startIdx = (state.page - 1) * PAGE_SIZE;
+  const pageRecs = state.filtered.slice(startIdx, startIdx + PAGE_SIZE);
+
+  pageRecs.forEach(rec => {
+    const scores = rec.scores_payload?.scores || {};
+    const modelCols = rec.scores_payload?.collections || [];
+    const finalCols = computeFinalCollections(rec);
+
+    const catKey = selectedCat || "astrophysics";
+    const catLabel = displayNameFor(catKey);
+
+    let selectedScore = (typeof scores[catKey] === "number") ? scores[catKey] : 0;
+    let topKey = null, topVal = -1;
+    for (const k of DISPLAY_ORDER){
+      const v = (typeof scores[k] === "number") ? scores[k] : 0;
+      if (v > topVal){ topVal = v; topKey = k; }
+    }
+    const topLabel = topKey ? displayNameFor(topKey) : "—";
+
+    const tr = document.createElement("tr");
+    tr.dataset.bibcode = rec.bibcode;
+    if (rec.bibcode === state.selectedBibcode) tr.classList.add("active");
+
+    tr.innerHTML = `<td>
+        <div class="mono" style="font-weight:600;">${escapeHtml(rec.bibcode)}</div>
+        <div>${escapeHtml(rec.title || "(title unavailable)")}</div>
+      </td>
+      <td>
+        <div class="small">Selected: <span class="mono">${selectedScore.toFixed(6)}</span></div>
+        <div class="small">Top: ${escapeHtml(topLabel)} <span class="mono">${Math.max(0, topVal).toFixed(6)}</span></div>
+      </td>
+      <td>${renderPills(finalCols.length ? finalCols : modelCols)}</td>
+      <td><button class="btn secondary" data-action="update" style="padding:8px 10px;">Update</button></td>
+    `;
+
+    tr.addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('button[data-action="update"]');
+      state.selectedBibcode = rec.bibcode;
+      renderResults();
+      if (btn){
+        openRecord(rec);
+        try { document.getElementById("editorPanel")?.scrollIntoView({behavior:"smooth", block:"nearest"}); } catch(_){}
+      }
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  const pager = $("paginationBottom");
+  if (pager){
+    pager.innerHTML = "";
+    if (pages > 1){
+      const mkBtn = (n) => {
+        const b = document.createElement("button");
+        b.textContent = String(n);
+        b.className = "btn secondary";
+        b.style.width = "auto";
+        b.style.padding = "6px 10px";
+        if (n === state.page) b.disabled = true;
+        b.addEventListener("click", ()=>{
+          state.page = n;
+          renderResults();
+          try { document.getElementById("resultsTable")?.scrollIntoView({behavior:"smooth", block:"nearest"}); } catch(_){}
+        });
+        return b;
+      };
+
+      pager.appendChild(mkBtn(1));
+      if (pages >= 2) pager.appendChild(mkBtn(2));
+
+      if (pages > 3){
+        const ell = document.createElement("span");
+        ell.textContent = "…";
+        ell.className = "tag";
+        pager.appendChild(ell);
+        pager.appendChild(mkBtn(pages));
+      } else if (pages === 3){
+        pager.appendChild(mkBtn(3));
+      }
+    }
+  }
+
+  if (!state.selectedBibcode) clearEditor();
+}
+
+function clearEditor(){
+  $("selectedTag").textContent = "No record selected";
+  $("overrideTag").style.display = "none";
+  $("kv").innerHTML = "";
+  $("scoresList").innerHTML = "";
+  $("overrideChecks").innerHTML = "";
+  $("rawJson").value = "";
+  $("applyOverride").disabled = true;
+  $("clearOverride").disabled = true;
+  if ($("exportOverrides")) $("exportOverrides").disabled = true;
+  if ($("copySelected")) $("copySelected").disabled = true;
+  $("editorPanel").style.display = "none";
+  $("editorBibcode").textContent = "";
+  if ($("postOverrideActions")) $("postOverrideActions").style.display = "none";
+  if ($("postOverrideHint")) $("postOverrideHint").style.display = "none";
+}
+
+function syncPostOverrideActions(rec){
+  const panel = $("postOverrideActions");
+  const hint = $("postOverrideHint");
+  const hasRec = !!rec;
+  const hasOv = !!(rec && Array.isArray(rec.override) && rec.override.length);
+
+  if (panel) panel.style.display = hasRec ? "flex" : "none";
+  if (hint) hint.style.display = (hasRec && !hasOv) ? "block" : "none";
+
+  if ($("exportOverrides")) $("exportOverrides").disabled = !hasOv;
+  if ($("copySelected")) $("copySelected").disabled = !hasOv;
+}
+
+function openRecord(rec){
+  const overrideCols = Array.isArray(rec.override) ? rec.override : [];
+  const finalCols = computeFinalCollections(rec);
+
+  $("selectedTag").textContent = rec.bibcode;
+  $("overrideTag").style.display = overrideCols.length ? "inline-flex" : "none";
+
+  $("kv").innerHTML = `
+    <div>Bibcode</div><div class="mono">${escapeHtml(rec.bibcode)}</div>
+    <div>Title</div><div>${escapeHtml(rec.title || "(title unavailable)")}</div>
+    <div>Model</div><div>${renderPills(rec.scores_payload?.collections || [])}</div>
+    <div>Override</div><div>${overrideCols.length ? renderPills(overrideCols) : `<span class="small">—</span>`}</div>
+    <div>Final</div><div>${renderPills(finalCols)}</div>
+  `;
+
+  const scores = rec.scores_payload?.scores || {};
+  $("scoresList").innerHTML = DISPLAY_ORDER.map(key => {
+    const v = typeof scores[key] === "number" ? scores[key] : 0;
+    const pct = Math.round(v * 1000) / 10;
+    return `
+      <div class="scoreRow">
+        <div>
+          <div class="small" style="display:flex; justify-content:space-between; gap:10px;">
+            <span>${escapeHtml(displayNameFor(key))}</span>
+            <span class="mono">${v.toFixed(6)}</span>
+          </div>
+          <div class="bar" aria-label="${escapeHtml(key)} score"><span style="width:${Math.max(0, Math.min(100, v*100))}%"></span></div>
+        </div>
+        <div class="small mono" style="text-align:right;">${pct}%</div>
+      </div>
+    `;
+  }).join("");
+
+  const checks = DISPLAY_ORDER.map(key => {
+    const id = `ov_${key.replaceAll(/[^a-zA-Z0-9]+/g,"_")}`;
+    const checked = overrideCols.includes(key) ? "checked" : "";
+    return `
+      <label class="check" for="${escapeHtml(id)}" title="${escapeHtml(key)}">
+        <input type="checkbox" id="${escapeHtml(id)}" data-cat="${escapeHtml(key)}" ${checked} />
+        <span>${escapeHtml(displayNameFor(key))}</span>
+      </label>
+    `;
+  }).join("");
+  $("overrideChecks").innerHTML = checks;
+
+  $("applyOverride").disabled = false;
+  $("clearOverride").disabled = false;
+
+  $("rawJson").value = JSON.stringify(buildDbPayload(rec), null, 2);
+
+  $("editorPanel").style.display = "block";
+  $("editorBibcode").textContent = rec.bibcode;
+
+  syncPostOverrideActions(rec);
+}
+
+function currentRecord(){
+  if (!state.selectedBibcode) return null;
+  return DATA.find(r => r.bibcode === state.selectedBibcode) || null;
+}
+
+function collectOverrideFromUI(){
+  return Array.from($("overrideChecks").querySelectorAll("input[type=checkbox]"))
+    .filter(cb => cb.checked)
+    .map(cb => cb.dataset.cat)
+    .filter(Boolean);
+}
+
+async function loadExamples(){
+  try{
+    const resp = await fetch("example_categories.json", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const arr = await resp.json();
+    if (!Array.isArray(arr)) throw new Error("example_categories.json is not an array");
+
+    state.page = 1;
+    DATA = arr.map(x => normalizeRecord({ bibcode: x.bibcode, scores_payload: x, override: [] }));
+    setSourceBadge(true);
+    toast(`Loaded ${DATA.length} example record(s).`);
+    runQuery();
+  } catch(err){
+    console.error(err);
+    toast("Failed to load example_categories.json");
+  }
+}
+
+async function demoLoadJson(bibcode){
+  const filename = `${bibcode}.json`;
+  const resp = await fetch(filename, { cache: "no-store" });
+  if (!resp.ok) throw new Error("Demo JSON failed: HTTP " + resp.status);
+  return await resp.json();
+}
+
+async function loadBibcode(){
+  const bc = $("bibcode").value.trim();
+  if (!bc) return toast("Enter a bibcode.");
+
+  try{
+    const payloadOnly = await demoLoadJson(bc);
+    const rec = normalizeRecord({ bibcode: bc, scores_payload: payloadOnly, override: [] });
+
+    const idx = DATA.findIndex(r => r.bibcode === rec.bibcode);
+    if (idx >= 0) DATA[idx] = rec;
+    else DATA.push(rec);
+
+    state.filtered = [rec];
+    state.selectedBibcode = rec.bibcode;
+    state.page = 1;
+
+    setSourceBadge(true);
+    renderResults();
+    openRecord(rec);
+    toast("Loaded bibcode (showing record).");
+  } catch(err){
+    console.error(err);
+    toast(`Failed to load ${bc}.json`);
+  }
+}
+
+function applyOverride(){
+  const rec = currentRecord();
+  if (!rec) return;
+
+  const chosen = collectOverrideFromUI();
+  rec.override = chosen;
+
+  (async()=>{
+    const ok = await postOverrideToApi(rec);
+    if (ok) toast("Override saved to API.");
+  })();
+
+  toast(chosen.length ? "Override updated (prototype only)." : "Override cleared (prototype only).");
+  renderResults();
+  openRecord(rec);
+  syncPostOverrideActions(rec);
+}
+
+function clearOverride(){
+  const rec = currentRecord();
+  if (!rec) return;
+  rec.override = [];
+  renderResults();
+  openRecord(rec);
+  syncPostOverrideActions(rec);
+  toast("Override cleared (prototype only).");
+}
+
+function exportOverrides(){
+  const rec = currentRecord();
+  if (!rec) return toast("No record selected.");
+  if (!Array.isArray(rec.override) || !rec.override.length) return toast("No override to export.");
+
+  const payload = buildDbPayload(rec);
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${rec.bibcode}_override_db_payload.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast("Exported override JSON.");
+}
+
+async function copySelectedJson(){
+  const rec = currentRecord();
+  if (!rec) return toast("No record selected.");
+  if (!Array.isArray(rec.override) || !rec.override.length) return toast("No override to copy.");
+
+  const payload = buildDbPayload(rec);
+
+  try{
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    toast("Copied override JSON.");
+  } catch(e){
+    toast("Copy failed (browser blocked).");
+  }
+}
+
+
+
+function boot(){
+  try{
+    if (location.protocol === "file:") $("fileWarn").style.display = "block";
+  } catch(e){}
+
+  if ($("category")){
+    $("category").innerHTML = DISPLAY_ORDER.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(displayNameFor(k))}</option>`).join("");
+    $("category").value = "astrophysics";
+    $("category").addEventListener("change", () => { if (DATA.length) runQuery(); });
+  }
+
+  $("loadBibcode").addEventListener("click", loadBibcode);
+  $("runQuery").addEventListener("click", runQuery);
+  $("loadExamples").addEventListener("click", loadExamples);
+  $("reset").addEventListener("click", clearAll);
+  $("applyOverride").addEventListener("click", applyOverride);
+  $("clearOverride").addEventListener("click", clearOverride);
+  if ($("exportOverrides")) $("exportOverrides").addEventListener("click", exportOverrides);
+  if ($("copySelected")) $("copySelected").addEventListener("click", copySelectedJson);
+
+  $("bibcode").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadBibcode();
+  });
+
+  const hash = (location.hash || "").replace(/^#/, "").trim();
+  if (hash) {
+    $("bibcode").value = hash;
+    loadBibcode();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
