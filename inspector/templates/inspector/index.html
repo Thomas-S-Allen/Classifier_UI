@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Classifier DB Inspector (Django)</title>
+  <style>
+    :root { --bg:#f5f7fb; --panel:#fff; --text:#1d2433; --muted:#5c667d; --line:#d8dfec; --primary:#0b5fff; --primary-2:#084dd1; --danger:#b42318; --ok:#067647; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:linear-gradient(180deg,#eef3ff 0%,var(--bg) 220px); }
+    .wrap { max-width:1500px; margin:0 auto; padding:16px; display:grid; gap:12px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 1px 2px rgba(16,24,40,.06); padding:12px; }
+    .title { margin:0 0 10px; font-size:14px; font-weight:700; color:var(--muted); letter-spacing:.02em; text-transform:uppercase; }
+    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    label { font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px; min-width:110px; }
+    input,select,button,textarea { font:inherit; }
+    input,select { border:1px solid var(--line); border-radius:7px; padding:6px 8px; min-height:34px; min-width:100px; background:#fff; color:var(--text); }
+    button { border:1px solid var(--primary); background:var(--primary); color:#fff; border-radius:7px; padding:7px 12px; cursor:pointer; min-height:34px; }
+    button:hover { background:var(--primary-2); }
+    button.secondary { background:#fff; color:var(--text); border-color:var(--line); }
+    .status { margin-left:auto; font-size:13px; color:var(--muted); font-weight:600; }
+    .status.ok { color:var(--ok); } .status.err { color:var(--danger); }
+    .table-wrap { overflow:auto; max-height:45vh; border:1px solid var(--line); border-radius:8px; }
+    table { width:100%; border-collapse:collapse; background:#fff; min-width:980px; }
+    th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
+    th { position:sticky; top:0; z-index:2; background:#f9fbff; font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); }
+    tbody tr { cursor:pointer; } tbody tr:hover { background:#f3f7ff; } tbody tr.selected { background:#e8f0ff; }
+    .detail-grid { display:grid; gap:10px; grid-template-columns:2fr 1fr; }
+    .meta { font-size:13px; color:var(--muted); }
+    .checks { display:grid; gap:8px; grid-template-columns:repeat(4,minmax(130px,1fr)); }
+    .checks label { border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0; gap:2px; background:#fcfdff; color:var(--text); font-size:12px; }
+    .checks input { min-width:auto; min-height:auto; }
+    textarea { border:1px solid var(--line); border-radius:8px; width:100%; min-height:180px; padding:8px; resize:vertical; background:#fff; }
+    .flash { font-size:13px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#f8faff; color:var(--muted); display:none; }
+    .flash.show { display:block; } .flash.err { border-color:#f5c2c7; background:#fff4f5; color:var(--danger);} .flash.ok { border-color:#b7ebd3; background:#f1fbf6; color:var(--ok);}
+    @media (max-width:980px) { .detail-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
+  </style>
+</head>
+<body>
+  {{ allowed_categories|json_script:"allowed-categories" }}
+  {{ query_specs|json_script:"query-specs" }}
+  <main class="wrap">
+    <section class="panel">
+      <h2 class="title">Database Connection</h2>
+      <div class="row">
+        <label>Host<input id="host" value="{{ defaults.host }}" /></label>
+        <label>Port<input id="port" value="{{ defaults.port }}" /></label>
+        <label>DB<input id="dbname" value="{{ defaults.dbname }}" /></label>
+        <label>User<input id="user" value="{{ defaults.user }}" /></label>
+        <label>Password<input id="password" type="password" value="{{ defaults.password }}" /></label>
+        <label>ADS Token<input id="ads_token" type="password" value="{{ defaults.ads_token }}" /></label>
+        <button id="connect_btn">Connect</button>
+        <div class="status" id="status">Not connected</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Query</h2>
+      <div class="row">
+        <label>Preset
+          <select id="preset"></select>
+        </label>
+        <label>run_id<input id="run_id" /></label>
+        <label>Bibcode contains<input id="bibcode_term" /></label>
+        <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
+        <label>Score category
+          <select id="score_category"></select>
+        </label>
+        <button id="run_query_btn">Run Query</button>
+        <div class="meta">Select a row to inspect and update collections.</div>
+      </div>
+      <div id="flash" class="flash"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Results</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Bibcode</th>
+              <th>Title</th>
+              <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
+              <th>run_id</th>
+              <th>validated</th>
+              <th>collection</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Details and Update</h2>
+      <div class="detail-grid">
+        <div>
+          <div class="meta" id="collection_label">No row selected.</div>
+          <div class="row" style="margin-top:8px;margin-bottom:8px;">
+            <label style="flex-direction:row; align-items:center; gap:8px; min-width:0;">
+              <input id="validated" type="checkbox" checked />
+              Set validated=True when updating
+            </label>
+          </div>
+          <div id="category_checks" class="checks"></div>
+          <div class="row" style="margin-top:10px;">
+            <button id="submit_btn">Submit Selection</button>
+            <button id="clear_btn" class="secondary">Clear Selection</button>
+          </div>
+        </div>
+        <div>
+          <label>Scores<textarea id="scores_text" readonly></textarea></label>
+          <label>Abstract<textarea id="abstract_text" readonly></textarea></label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const allowedCategories = JSON.parse(document.getElementById("allowed-categories").textContent);
+    const querySpecs = JSON.parse(document.getElementById("query-specs").textContent);
+    let rowsData = [];
+    let selectedIdx = -1;
+    let scoreSortDir = "desc";
+
+    const el = (id) => document.getElementById(id);
+
+    function dbPayload() {
+      return {
+        host: el("host").value,
+        port: el("port").value,
+        dbname: el("dbname").value,
+        user: el("user").value,
+        password: el("password").value,
+      };
+    }
+
+    function setStatus(text, cls = "") {
+      const s = el("status");
+      s.textContent = text;
+      s.className = `status ${cls}`.trim();
+    }
+
+    function showFlash(text, type = "") {
+      const f = el("flash");
+      f.textContent = text;
+      f.className = `flash show ${type}`.trim();
+    }
+
+    function clearFlash() {
+      const f = el("flash");
+      f.textContent = "";
+      f.className = "flash";
+    }
+
+    function initSelects() {
+      const preset = el("preset");
+      preset.innerHTML = "";
+      querySpecs.forEach((q) => {
+        const opt = document.createElement("option");
+        opt.value = q;
+        opt.textContent = q;
+        preset.appendChild(opt);
+      });
+
+      const scoreCat = el("score_category");
+      scoreCat.innerHTML = "";
+      allowedCategories.forEach((c, idx) => {
+        const opt = document.createElement("option");
+        opt.value = c;
+        opt.textContent = c;
+        if (idx === 0) {
+          opt.selected = true;
+        }
+        scoreCat.appendChild(opt);
+      });
+    }
+
+    function buildCategoryChecks() {
+      const box = el("category_checks");
+      box.innerHTML = "";
+      allowedCategories.forEach((cat) => {
+        const label = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = cat;
+        cb.dataset.category = cat;
+        const t1 = document.createElement("span");
+        t1.textContent = cat;
+        const t2 = document.createElement("span");
+        t2.className = "meta";
+        t2.textContent = "0.00";
+        label.append(cb, t1, t2);
+        box.appendChild(label);
+      });
+    }
+
+    function selectedCategories() {
+      return Array.from(document.querySelectorAll("#category_checks input[type=checkbox]:checked")).map((i) => i.value);
+    }
+
+    function clearChecks() {
+      document.querySelectorAll("#category_checks input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+    }
+
+    async function api(path, method = "GET", payload = null) {
+      const opts = { method, headers: {} };
+      if (payload !== null) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(payload);
+      }
+      const resp = await fetch(path, opts);
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.error || `Request failed: ${resp.status}`);
+      }
+      return data;
+    }
+
+    function rowToTr(row, idx) {
+      const tr = document.createElement("tr");
+      if (idx === selectedIdx) { tr.classList.add("selected"); }
+      tr.innerHTML = `
+        <td>${row.bibcode || ""}</td>
+        <td>${row.title || ""}</td>
+        <td>${row.score || ""}</td>
+        <td>${row.run_id ?? ""}</td>
+        <td>${row.validated ? "True" : "False"}</td>
+        <td>${(row.collection || []).join(", ")}</td>
+      `;
+      tr.addEventListener("click", () => selectRow(idx));
+      return tr;
+    }
+
+    function renderRows() {
+      const body = el("rows");
+      body.innerHTML = "";
+      rowsData.forEach((row, idx) => body.appendChild(rowToTr(row, idx)));
+    }
+
+    function scoreToNumber(v) {
+      const n = Number.parseFloat(v);
+      return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+    }
+
+    function sortRowsByScore() {
+      const factor = scoreSortDir === "asc" ? 1 : -1;
+      rowsData.sort((a, b) => (scoreToNumber(a.score) - scoreToNumber(b.score)) * factor);
+      const header = el("score_col_header");
+      const base = "Score";
+      header.textContent = `${base} ${scoreSortDir === "asc" ? "▲" : "▼"}`;
+    }
+
+    async function selectRow(idx) {
+      selectedIdx = idx;
+      renderRows();
+      clearFlash();
+
+      if (idx < 0 || idx >= rowsData.length) {
+        return;
+      }
+
+      el("abstract_text").value = "Loading abstract...";
+      try {
+        const data = await api("/api/record", "POST", {
+          record: rowsData[idx].record,
+          ads_token: el("ads_token").value || "",
+        });
+        const detail = data.detail;
+
+        el("collection_label").textContent = detail.collection_label;
+        el("scores_text").value = detail.scores_text;
+        el("abstract_text").value = detail.abstract_text;
+
+        const infoByName = Object.fromEntries(detail.categories.map((c) => [c.name, c]));
+        const labelNodes = Array.from(document.querySelectorAll("#category_checks label"));
+        labelNodes.forEach((label) => {
+          const cb = label.querySelector("input");
+          const name = cb.dataset.category;
+          const info = infoByName[name];
+          const line1 = label.querySelector("span:nth-of-type(1)");
+          const line2 = label.querySelector("span:nth-of-type(2)");
+          cb.checked = !!info?.checked;
+
+          let tags = "";
+          if (info && info.tags && info.tags.length) {
+            tags = ` [${info.tags.join(" / ")}]`;
+          }
+          line1.textContent = `${name}${tags}`;
+          line2.textContent = info ? info.score : "0.00";
+        });
+      } catch (err) {
+        el("abstract_text").value = `(Failed to load details: ${err.message})`;
+        showFlash(err.message, "err");
+      }
+    }
+
+    el("score_col_header").addEventListener("click", () => {
+      if (!rowsData.length) {
+        return;
+      }
+      scoreSortDir = scoreSortDir === "asc" ? "desc" : "asc";
+      sortRowsByScore();
+      selectedIdx = -1;
+      el("collection_label").textContent = "No row selected.";
+      el("scores_text").value = "";
+      el("abstract_text").value = "";
+      clearChecks();
+      renderRows();
+    });
+
+    el("connect_btn").addEventListener("click", async () => {
+      clearFlash();
+      setStatus("Connecting...");
+      try {
+        await api("/api/connect", "POST", dbPayload());
+        setStatus("Connected", "ok");
+        showFlash("Connected to PostgreSQL.", "ok");
+      } catch (err) {
+        setStatus("Connection failed", "err");
+        showFlash(err.message, "err");
+      }
+    });
+
+    el("run_query_btn").addEventListener("click", async () => {
+      clearFlash();
+      setStatus("Query running...");
+      selectedIdx = -1;
+      el("collection_label").textContent = "No row selected.";
+      el("scores_text").value = "";
+      el("abstract_text").value = "";
+      clearChecks();
+
+      try {
+        const scoreCategory = el("score_category").value;
+        const data = await api("/api/query", "POST", {
+          ...dbPayload(),
+          preset: el("preset").value,
+          run_id: el("run_id").value,
+          bibcode_term: el("bibcode_term").value,
+          limit: el("limit").value,
+          score_category: scoreCategory,
+          ads_token: el("ads_token").value,
+        });
+
+        rowsData = data.rows || [];
+        sortRowsByScore();
+        renderRows();
+        setStatus("Connected", "ok");
+
+        const msg = `Loaded ${data.count} rows`;
+        if (data.warning) {
+          showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
+        } else {
+          showFlash(msg, "ok");
+        }
+      } catch (err) {
+        rowsData = [];
+        renderRows();
+        setStatus("Connected");
+        showFlash(err.message, "err");
+      }
+    });
+
+    el("submit_btn").addEventListener("click", async () => {
+      if (selectedIdx < 0 || selectedIdx >= rowsData.length) {
+        showFlash("Select a record first.", "err");
+        return;
+      }
+      clearFlash();
+      setStatus("Updating...");
+
+      try {
+        const data = await api("/api/update", "POST", {
+          ...dbPayload(),
+          record: rowsData[selectedIdx].record,
+          selected_categories: selectedCategories(),
+          validated: !!el("validated").checked,
+        });
+        setStatus("Connected", "ok");
+        showFlash(data.message || "Update successful.", "ok");
+        el("run_query_btn").click();
+      } catch (err) {
+        setStatus("Connected");
+        showFlash(err.message, "err");
+      }
+    });
+
+    el("clear_btn").addEventListener("click", () => {
+      clearChecks();
+    });
+
+    initSelects();
+    buildCategoryChecks();
+    sortRowsByScore();
+  </script>
+</body>
+</html>
