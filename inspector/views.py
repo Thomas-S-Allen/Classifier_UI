@@ -28,7 +28,7 @@ ALLOWED_CATEGORIES = [
     "Text Garbage",
 ]
 
-ADS_API_URL = "https://api.adsabs.harvard.edu/v1/search/query"
+ADS_API_URL = CONFIG.get("ADS_API_URL", "https://devapi.adsabs.harvard.edu/v1/search/query")
 
 
 @dataclass(frozen=True)
@@ -377,7 +377,7 @@ def index(request):
                 "dbname": CONFIG.get("PGDATABASE", "classifier_pipeline"),
                 "user": CONFIG.get("PGUSER", ""),
                 "password": CONFIG.get("PGPASSWORD", ""),
-                "ads_token": CONFIG.get("ADS_API_TOKEN", CONFIG.get("API_TOKEN", "")),
+                "ads_token": CONFIG.get("ADS_API_TOKEN", ""),
                 "limit": "200",
                 "score_category": ALLOWED_CATEGORIES[0],
             },
