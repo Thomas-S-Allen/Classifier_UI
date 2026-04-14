@@ -142,6 +142,7 @@
   <script>
     const allowedCategories = JSON.parse(document.getElementById("allowed-categories").textContent);
     const querySpecs = JSON.parse(document.getElementById("query-specs").textContent);
+    const LARGE_BATCH_CONFIRM_THRESHOLD = 100;
     let rowsData = [];
     let selectedIdx = -1;
     let selectedRowKeys = new Set();
@@ -325,6 +326,29 @@
       el("select_all_rows").checked = allChecked;
     }
 
+    function patchUpdatedRows(updatedRowKeys, categories, validated) {
+      const categoryCopy = [...categories];
+      rowsData = rowsData.map((row) => {
+        if (!updatedRowKeys.has(row.row_key)) {
+          return row;
+        }
+
+        const nextRecord = {
+          ...row.record,
+          collection: categoryCopy,
+          override: categoryCopy,
+          validated,
+        };
+
+        return {
+          ...row,
+          record: nextRecord,
+          collection: categoryCopy,
+          validated,
+        };
+      });
+    }
+
     function scoreToNumber(v) {
       const n = Number.parseFloat(v);
       return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
@@ -457,24 +481,43 @@
     });
 
     el("submit_btn").addEventListener("click", async () => {
-      const selectedRecords = rowsData.filter((row) => selectedRowKeys.has(row.row_key)).map((row) => row.record);
+      const selectedRows = rowsData.filter((row) => selectedRowKeys.has(row.row_key));
+      const selectedRecords = selectedRows.map((row) => row.record);
       if (!selectedRecords.length) {
         showFlash("Select at least one record first.", "err");
         return;
+      }
+      if (selectedRecords.length >= LARGE_BATCH_CONFIRM_THRESHOLD) {
+        const confirmed = window.confirm(`You are about to update ${selectedRecords.length} records at once. Continue?`);
+        if (!confirmed) {
+          return;
+        }
       }
       clearFlash();
       setStatus("Updating...");
 
       try {
+        const updatedRowKeys = new Set(selectedRows.map((row) => row.row_key));
+        const categories = selectedCategories();
+        const validated = !!el("validated").checked;
         const data = await api("/api/update", "POST", {
           ...dbPayload(),
           records: selectedRecords,
-          selected_categories: selectedCategories(),
-          validated: !!el("validated").checked,
+          selected_categories: categories,
+          validated,
         });
+        patchUpdatedRows(updatedRowKeys, categories, validated);
+        selectedRowKeys = new Set();
+        renderRows();
+        if (selectedIdx >= 0 && selectedIdx < rowsData.length) {
+          if (updatedRowKeys.has(rowsData[selectedIdx].row_key)) {
+            await selectRow(selectedIdx);
+          } else {
+            syncSelectAllState();
+          }
+        }
         setStatus("Connected", "ok");
         showFlash(data.message || "Update successful.", "ok");
-        el("run_query_btn").click();
       } catch (err) {
         setStatus("Connected");
         showFlash(err.message, "err");
