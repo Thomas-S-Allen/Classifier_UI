@@ -31,9 +31,14 @@
     .checks label { border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0; gap:2px; background:#fcfdff; color:var(--text); font-size:12px; }
     .checks input { min-width:auto; min-height:auto; }
     textarea { border:1px solid var(--line); border-radius:8px; width:100%; min-height:180px; padding:8px; resize:vertical; background:#fff; }
+    .query-grid { display:grid; gap:12px; grid-template-columns:2fr 1fr; align-items:start; }
+    .query-inputs { display:grid; gap:10px; }
+    .inline-meta { font-size:12px; color:var(--muted); }
+    .select-cell { width:38px; text-align:center; }
+    .select-cell input { min-width:auto; min-height:auto; }
     .flash { font-size:13px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#f8faff; color:var(--muted); display:none; }
     .flash.show { display:block; } .flash.err { border-color:#f5c2c7; background:#fff4f5; color:var(--danger);} .flash.ok { border-color:#b7ebd3; background:#f1fbf6; color:var(--ok);}
-    @media (max-width:980px) { .detail-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
+    @media (max-width:980px) { .detail-grid,.query-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
   </style>
 </head>
 <body>
@@ -56,18 +61,35 @@
 
     <section class="panel">
       <h2 class="title">Query</h2>
-      <div class="row">
-        <label>Preset
-          <select id="preset"></select>
-        </label>
-        <label>run_id<input id="run_id" /></label>
-        <label>Bibcode contains<input id="bibcode_term" /></label>
-        <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
-        <label>Score category
-          <select id="score_category"></select>
-        </label>
-        <button id="run_query_btn">Run Query</button>
-        <div class="meta">Select a row to inspect and update collections.</div>
+      <div class="query-grid">
+        <div class="query-inputs">
+          <div class="row">
+            <label>Preset
+              <select id="preset"></select>
+            </label>
+            <label>run_id<input id="run_id" /></label>
+            <label>Bibcode contains<input id="bibcode_term" /></label>
+            <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
+            <label>Score category
+              <select id="score_category"></select>
+            </label>
+            <button id="run_query_btn">Run Query</button>
+          </div>
+          <div class="row">
+            <label style="min-width:280px; flex:1;">
+              Bibcode list (comma separated)
+              <textarea id="bibcode_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q, 2001ApJ...548..466Q"></textarea>
+            </label>
+            <label style="min-width:220px;">
+              Upload bibcodes
+              <input id="bibcode_file" type="file" accept=".txt,.csv,.tsv" />
+            </label>
+          </div>
+          <div class="row">
+            <div class="inline-meta" id="bibcode_list_status">No bibcode list loaded.</div>
+          </div>
+        </div>
+        <div class="meta">Select a row to inspect details. Use the table checkboxes to choose one or more rows for update.</div>
       </div>
       <div id="flash" class="flash"></div>
     </section>
@@ -78,6 +100,7 @@
         <table>
           <thead>
             <tr>
+              <th class="select-cell"><input id="select_all_rows" type="checkbox" title="Select all rows" /></th>
               <th>Bibcode</th>
               <th>Title</th>
               <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
@@ -121,6 +144,8 @@
     const querySpecs = JSON.parse(document.getElementById("query-specs").textContent);
     let rowsData = [];
     let selectedIdx = -1;
+    let selectedRowKeys = new Set();
+    let parsedBibcodes = [];
     let scoreSortDir = "desc";
 
     const el = (id) => document.getElementById(id);
@@ -151,6 +176,48 @@
       const f = el("flash");
       f.textContent = "";
       f.className = "flash";
+    }
+
+    function parseBibcodes(rawText, splitOnNewlinesOnly = false) {
+      const pieces = splitOnNewlinesOnly ? rawText.split(/\r?\n/) : rawText.split(/[\r\n,]+/);
+      const out = [];
+      const seen = new Set();
+      pieces.forEach((piece, idx) => {
+        const value = piece.trim();
+        if (!value) {
+          return;
+        }
+        if (idx === 0 && value.toLowerCase().includes("bibcode")) {
+          return;
+        }
+        if (seen.has(value)) {
+          return;
+        }
+        seen.add(value);
+        out.push(value);
+      });
+      return out;
+    }
+
+    function syncBibcodeState() {
+      parsedBibcodes = parseBibcodes(el("bibcode_list_input").value || "");
+      const count = parsedBibcodes.length;
+      const fileName = el("bibcode_file").files[0]?.name;
+      if (!count) {
+        el("bibcode_list_status").textContent = fileName ? `Loaded ${fileName}, but no bibcodes were parsed.` : "No bibcode list loaded.";
+        return;
+      }
+      el("bibcode_list_status").textContent = fileName ? `${count} bibcodes parsed from ${fileName}.` : `${count} bibcodes parsed from text input.`;
+    }
+
+    function clearSelectionState() {
+      selectedIdx = -1;
+      selectedRowKeys = new Set();
+      el("select_all_rows").checked = false;
+      el("collection_label").textContent = "No row selected.";
+      el("scores_text").value = "";
+      el("abstract_text").value = "";
+      clearChecks();
     }
 
     function initSelects() {
@@ -220,7 +287,9 @@
     function rowToTr(row, idx) {
       const tr = document.createElement("tr");
       if (idx === selectedIdx) { tr.classList.add("selected"); }
+      const checked = selectedRowKeys.has(row.row_key) ? "checked" : "";
       tr.innerHTML = `
+        <td class="select-cell"><input type="checkbox" data-row-key="${row.row_key}" ${checked} /></td>
         <td>${row.bibcode || ""}</td>
         <td>${row.title || ""}</td>
         <td>${row.score || ""}</td>
@@ -228,6 +297,18 @@
         <td>${row.validated ? "True" : "False"}</td>
         <td>${(row.collection || []).join(", ")}</td>
       `;
+      const cb = tr.querySelector('input[type="checkbox"]');
+      cb.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          selectedRowKeys.add(row.row_key);
+        } else {
+          selectedRowKeys.delete(row.row_key);
+        }
+        syncSelectAllState();
+      });
       tr.addEventListener("click", () => selectRow(idx));
       return tr;
     }
@@ -236,6 +317,12 @@
       const body = el("rows");
       body.innerHTML = "";
       rowsData.forEach((row, idx) => body.appendChild(rowToTr(row, idx)));
+      syncSelectAllState();
+    }
+
+    function syncSelectAllState() {
+      const allChecked = rowsData.length > 0 && rowsData.every((row) => selectedRowKeys.has(row.row_key));
+      el("select_all_rows").checked = allChecked;
     }
 
     function scoreToNumber(v) {
@@ -268,7 +355,9 @@
         });
         const detail = data.detail;
 
-        el("collection_label").textContent = detail.collection_label;
+        const selectedCount = selectedRowKeys.size;
+        const suffix = selectedCount ? `    Rows selected for update: ${selectedCount}` : "";
+        el("collection_label").textContent = `${detail.collection_label}${suffix}`;
         el("scores_text").value = detail.scores_text;
         el("abstract_text").value = detail.abstract_text;
 
@@ -325,30 +414,35 @@
     el("run_query_btn").addEventListener("click", async () => {
       clearFlash();
       setStatus("Query running...");
-      selectedIdx = -1;
-      el("collection_label").textContent = "No row selected.";
-      el("scores_text").value = "";
-      el("abstract_text").value = "";
-      clearChecks();
+      clearSelectionState();
 
       try {
         const scoreCategory = el("score_category").value;
+        const preset = el("preset").value;
         const data = await api("/api/query", "POST", {
           ...dbPayload(),
-          preset: el("preset").value,
+          preset,
           run_id: el("run_id").value,
           bibcode_term: el("bibcode_term").value,
+          bibcode_list: parsedBibcodes,
           limit: el("limit").value,
           score_category: scoreCategory,
           ads_token: el("ads_token").value,
         });
 
         rowsData = data.rows || [];
-        sortRowsByScore();
+        if (preset !== "By bibcode list") {
+          sortRowsByScore();
+        } else {
+          el("score_col_header").textContent = "Score";
+        }
         renderRows();
         setStatus("Connected", "ok");
 
-        const msg = `Loaded ${data.count} rows`;
+        let msg = `Loaded ${data.count} rows`;
+        if (preset === "By bibcode list" && data.missing_bibcodes?.length) {
+          msg += `. Missing bibcodes: ${data.missing_bibcodes.join(", ")}`;
+        }
         if (data.warning) {
           showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
         } else {
@@ -363,8 +457,9 @@
     });
 
     el("submit_btn").addEventListener("click", async () => {
-      if (selectedIdx < 0 || selectedIdx >= rowsData.length) {
-        showFlash("Select a record first.", "err");
+      const selectedRecords = rowsData.filter((row) => selectedRowKeys.has(row.row_key)).map((row) => row.record);
+      if (!selectedRecords.length) {
+        showFlash("Select at least one record first.", "err");
         return;
       }
       clearFlash();
@@ -373,7 +468,7 @@
       try {
         const data = await api("/api/update", "POST", {
           ...dbPayload(),
-          record: rowsData[selectedIdx].record,
+          records: selectedRecords,
           selected_categories: selectedCategories(),
           validated: !!el("validated").checked,
         });
@@ -390,9 +485,38 @@
       clearChecks();
     });
 
+    el("select_all_rows").addEventListener("change", (event) => {
+      if (event.target.checked) {
+        selectedRowKeys = new Set(rowsData.map((row) => row.row_key));
+      } else {
+        selectedRowKeys = new Set();
+      }
+      renderRows();
+    });
+
+    el("bibcode_list_input").addEventListener("input", () => {
+      syncBibcodeState();
+    });
+
+    el("bibcode_file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) {
+        syncBibcodeState();
+        return;
+      }
+      try {
+        const text = await file.text();
+        const parsed = parseBibcodes(text, true);
+        el("bibcode_list_input").value = parsed.join("\n");
+        syncBibcodeState();
+      } catch (err) {
+        showFlash(`Failed to read file: ${err.message}`, "err");
+      }
+    });
+
     initSelects();
     buildCategoryChecks();
-    sortRowsByScore();
+    syncBibcodeState();
   </script>
 </body>
 </html>
