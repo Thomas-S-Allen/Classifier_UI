@@ -29,6 +29,8 @@ ALLOWED_CATEGORIES = [
 ]
 
 ADS_API_URL = CONFIG.get("ADS_API_URL", "https://devapi.adsabs.harvard.edu/v1/search/query")
+MAX_BIBCODE_LIST_SIZE = 1000
+MAX_BULK_UPDATE_RECORDS = 500
 
 
 @dataclass(frozen=True)
@@ -393,6 +395,17 @@ def normalize_bibcode_list(items):
     return normalized
 
 
+def build_row_key(row, idx):
+    return ":".join(
+        [
+            str(row.get("score_id") or ""),
+            str(row.get("final_collection_id") or ""),
+            str(row.get("bibcode") or ""),
+            str(idx),
+        ]
+    )
+
+
 def open_db(payload) -> DatabaseClient:
     client = DatabaseClient()
     client.connect(
@@ -459,6 +472,12 @@ def api_query(request):
     score_category = str(payload.get("score_category", ALLOWED_CATEGORIES[0]))
     ads_token = str(payload.get("ads_token", "")).strip()
 
+    if len(bibcode_list) > MAX_BIBCODE_LIST_SIZE:
+        return JsonResponse(
+            {"ok": False, "error": f"Bibcode list exceeds the maximum of {MAX_BIBCODE_LIST_SIZE} items."},
+            status=400,
+        )
+
     try:
         limit = int(payload.get("limit", 200))
         if limit <= 0:
@@ -503,7 +522,7 @@ def api_query(request):
             table_rows.append(
                 {
                     "record_idx": idx,
-                    "row_key": str(row.get("score_id") or row.get("final_collection_id") or row.get("bibcode") or idx),
+                    "row_key": build_row_key(row, idx),
                     "record": row,
                     "bibcode": row.get("bibcode") or "",
                     "title": row.get("title") or "",
@@ -514,12 +533,14 @@ def api_query(request):
                 }
             )
 
+        found_bibcodes = {row.get("bibcode") for row in rows if row.get("bibcode")}
+
         return JsonResponse(
             {
                 "ok": True,
                 "rows": table_rows,
                 "count": len(table_rows),
-                "missing_bibcodes": [bib for bib in bibcode_list if bib not in {row.get("bibcode") for row in rows if row.get("bibcode")}],
+                "missing_bibcodes": [bib for bib in bibcode_list if bib not in found_bibcodes],
                 "warning": warning,
             }
         )
@@ -606,6 +627,11 @@ def api_update(request):
         return JsonResponse({"ok": False, "error": "selected_categories must be a list."}, status=400)
     if not records:
         return JsonResponse({"ok": False, "error": "Select at least one record to update."}, status=400)
+    if len(records) > MAX_BULK_UPDATE_RECORDS:
+        return JsonResponse(
+            {"ok": False, "error": f"Bulk update exceeds the maximum of {MAX_BULK_UPDATE_RECORDS} records."},
+            status=400,
+        )
 
     invalid = [cat for cat in selected_categories if cat not in ALLOWED_CATEGORIES]
     if invalid:
