@@ -80,10 +80,13 @@
               Bibcode list (comma separated)
               <textarea id="bibcode_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q, 2001ApJ...548..466Q"></textarea>
             </label>
-            <label style="min-width:220px;">
-              Upload bibcodes
-              <input id="bibcode_file" type="file" accept=".txt,.csv,.tsv" />
-            </label>
+            <div style="display:grid; gap:8px; min-width:220px;">
+              <label style="min-width:220px;">
+                Upload bibcodes
+                <input id="bibcode_file" type="file" accept=".txt,.csv,.tsv" />
+              </label>
+              <button id="load_bibcodes_btn" type="button">Load Bibcode List</button>
+            </div>
           </div>
           <div class="row">
             <div class="inline-meta" id="bibcode_list_status">No bibcode list loaded.</div>
@@ -219,6 +222,44 @@
       el("scores_text").value = "";
       el("abstract_text").value = "";
       clearChecks();
+    }
+
+    async function runQueryWithPreset(presetOverride = null) {
+      clearFlash();
+      setStatus("Query running...");
+      clearSelectionState();
+
+      const scoreCategory = el("score_category").value;
+      const preset = presetOverride || el("preset").value;
+      const data = await api("/api/query", "POST", {
+        ...dbPayload(),
+        preset,
+        run_id: el("run_id").value,
+        bibcode_term: el("bibcode_term").value,
+        bibcode_list: parsedBibcodes,
+        limit: el("limit").value,
+        score_category: scoreCategory,
+        ads_token: el("ads_token").value,
+      });
+
+      rowsData = data.rows || [];
+      if (preset !== "By bibcode list") {
+        sortRowsByScore();
+      } else {
+        el("score_col_header").textContent = "Score";
+      }
+      renderRows();
+      setStatus("Connected", "ok");
+
+      let msg = `Loaded ${data.count} rows`;
+      if (preset === "By bibcode list" && data.missing_bibcodes?.length) {
+        msg += `. Missing bibcodes: ${data.missing_bibcodes.join(", ")}`;
+      }
+      if (data.warning) {
+        showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
+      } else {
+        showFlash(msg, "ok");
+      }
     }
 
     function initSelects() {
@@ -436,42 +477,23 @@
     });
 
     el("run_query_btn").addEventListener("click", async () => {
-      clearFlash();
-      setStatus("Query running...");
-      clearSelectionState();
-
       try {
-        const scoreCategory = el("score_category").value;
-        const preset = el("preset").value;
-        const data = await api("/api/query", "POST", {
-          ...dbPayload(),
-          preset,
-          run_id: el("run_id").value,
-          bibcode_term: el("bibcode_term").value,
-          bibcode_list: parsedBibcodes,
-          limit: el("limit").value,
-          score_category: scoreCategory,
-          ads_token: el("ads_token").value,
-        });
-
-        rowsData = data.rows || [];
-        if (preset !== "By bibcode list") {
-          sortRowsByScore();
-        } else {
-          el("score_col_header").textContent = "Score";
-        }
+        await runQueryWithPreset();
+      } catch (err) {
+        rowsData = [];
         renderRows();
-        setStatus("Connected", "ok");
+        setStatus("Connected");
+        showFlash(err.message, "err");
+      }
+    });
 
-        let msg = `Loaded ${data.count} rows`;
-        if (preset === "By bibcode list" && data.missing_bibcodes?.length) {
-          msg += `. Missing bibcodes: ${data.missing_bibcodes.join(", ")}`;
-        }
-        if (data.warning) {
-          showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
-        } else {
-          showFlash(msg, "ok");
-        }
+    el("load_bibcodes_btn").addEventListener("click", async () => {
+      if (!parsedBibcodes.length) {
+        showFlash("Add at least one bibcode to the list first.", "err");
+        return;
+      }
+      try {
+        await runQueryWithPreset("By bibcode list");
       } catch (err) {
         rowsData = [];
         renderRows();
