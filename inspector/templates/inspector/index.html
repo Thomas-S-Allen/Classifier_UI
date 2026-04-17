@@ -69,6 +69,7 @@
             </label>
             <label>run_id<input id="run_id" /></label>
             <label>Bibcode contains<input id="bibcode_term" /></label>
+            <label>scix_id contains<input id="scix_id_term" /></label>
             <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
             <label>Score category
               <select id="score_category"></select>
@@ -77,19 +78,19 @@
           </div>
           <div class="row">
             <label style="min-width:280px; flex:1;">
-              Bibcode list (comma separated)
-              <textarea id="bibcode_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q, 2001ApJ...548..466Q"></textarea>
+              Identifier list (comma separated)
+              <textarea id="identifier_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q or scix:abcd-1234"></textarea>
             </label>
             <div style="display:grid; gap:8px; min-width:220px;">
               <label style="min-width:220px;">
-                Upload bibcodes
-                <input id="bibcode_file" type="file" accept=".txt,.csv,.tsv" />
+                Upload identifiers
+                <input id="identifier_file" type="file" accept=".txt,.csv,.tsv" />
               </label>
-              <button id="load_bibcodes_btn" type="button">Load Bibcode List</button>
+              <button id="load_identifiers_btn" type="button">Load Identifier List</button>
             </div>
           </div>
           <div class="row">
-            <div class="inline-meta" id="bibcode_list_status">No bibcode list loaded.</div>
+            <div class="inline-meta" id="identifier_list_status">No identifier list loaded.</div>
           </div>
         </div>
         <div class="meta">Select a row to inspect details. Use the table checkboxes to choose one or more rows for update.</div>
@@ -104,6 +105,7 @@
           <thead>
             <tr>
               <th class="select-cell"><input id="select_all_rows" type="checkbox" title="Select all rows" /></th>
+              <th>scix_id</th>
               <th>Bibcode</th>
               <th>Title</th>
               <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
@@ -146,10 +148,13 @@
     const allowedCategories = JSON.parse(document.getElementById("allowed-categories").textContent);
     const querySpecs = JSON.parse(document.getElementById("query-specs").textContent);
     const LARGE_BATCH_CONFIRM_THRESHOLD = 100;
+    const BIBCODE_LIST_PRESET = "By bibcode list";
+    const SCIX_ID_LIST_PRESET = "By scix_id list";
     let rowsData = [];
     let selectedIdx = -1;
     let selectedRowKeys = new Set();
-    let parsedBibcodes = [];
+    let parsedIdentifiers = [];
+    let parsedIdentifierType = null;
     let scoreSortDir = "desc";
 
     const el = (id) => document.getElementById(id);
@@ -182,7 +187,7 @@
       f.className = "flash";
     }
 
-    function parseBibcodes(rawText, splitOnNewlinesOnly = false) {
+    function parseIdentifiers(rawText, splitOnNewlinesOnly = false) {
       const pieces = splitOnNewlinesOnly ? rawText.split(/\r?\n/) : rawText.split(/[\r\n,]+/);
       const out = [];
       const seen = new Set();
@@ -191,7 +196,8 @@
         if (!value) {
           return;
         }
-        if (idx === 0 && value.toLowerCase().includes("bibcode")) {
+        const lower = value.toLowerCase();
+        if (idx === 0 && (lower.includes("bibcode") || lower.includes("scix_id") || lower.includes("scixid"))) {
           return;
         }
         if (seen.has(value)) {
@@ -203,15 +209,25 @@
       return out;
     }
 
-    function syncBibcodeState() {
-      parsedBibcodes = parseBibcodes(el("bibcode_list_input").value || "");
-      const count = parsedBibcodes.length;
-      const fileName = el("bibcode_file").files[0]?.name;
+    function detectIdentifierType(items) {
+      if (!items.length) {
+        return null;
+      }
+      const allScixIds = items.every((item) => item.toLowerCase().startsWith("scix:"));
+      return allScixIds ? "scix_id" : "bibcode";
+    }
+
+    function syncIdentifierState() {
+      parsedIdentifiers = parseIdentifiers(el("identifier_list_input").value || "");
+      parsedIdentifierType = detectIdentifierType(parsedIdentifiers);
+      const count = parsedIdentifiers.length;
+      const fileName = el("identifier_file").files[0]?.name;
       if (!count) {
-        el("bibcode_list_status").textContent = fileName ? `Loaded ${fileName}, but no bibcodes were parsed.` : "No bibcode list loaded.";
+        el("identifier_list_status").textContent = fileName ? `Loaded ${fileName}, but no identifiers were parsed.` : "No identifier list loaded.";
         return;
       }
-      el("bibcode_list_status").textContent = fileName ? `${count} bibcodes parsed from ${fileName}.` : `${count} bibcodes parsed from text input.`;
+      const typeLabel = parsedIdentifierType === "scix_id" ? "scix_id" : "bibcode";
+      el("identifier_list_status").textContent = fileName ? `${count} ${typeLabel}s parsed from ${fileName}.` : `${count} ${typeLabel}s parsed from text input.`;
     }
 
     function clearSelectionState() {
@@ -231,19 +247,24 @@
 
       const scoreCategory = el("score_category").value;
       const preset = presetOverride || el("preset").value;
-      const data = await api("/api/query", "POST", {
+      const payload = {
         ...dbPayload(),
         preset,
         run_id: el("run_id").value,
         bibcode_term: el("bibcode_term").value,
-        bibcode_list: parsedBibcodes,
+        scix_id_term: el("scix_id_term").value,
+        bibcode_list: preset === BIBCODE_LIST_PRESET ? parsedIdentifiers : [],
+        scix_id_list: preset === SCIX_ID_LIST_PRESET ? parsedIdentifiers : [],
         limit: el("limit").value,
         score_category: scoreCategory,
         ads_token: el("ads_token").value,
+      };
+      const data = await api("/api/query", "POST", {
+        ...payload,
       });
 
       rowsData = data.rows || [];
-      if (preset !== "By bibcode list") {
+      if (preset !== BIBCODE_LIST_PRESET && preset !== SCIX_ID_LIST_PRESET) {
         sortRowsByScore();
       } else {
         el("score_col_header").textContent = "Score";
@@ -252,8 +273,11 @@
       setStatus("Connected", "ok");
 
       let msg = `Loaded ${data.count} rows`;
-      if (preset === "By bibcode list" && data.missing_bibcodes?.length) {
+      if (preset === BIBCODE_LIST_PRESET && data.missing_bibcodes?.length) {
         msg += `. Missing bibcodes: ${data.missing_bibcodes.join(", ")}`;
+      }
+      if (preset === SCIX_ID_LIST_PRESET && data.missing_scix_ids?.length) {
+        msg += `. Missing scix_ids: ${data.missing_scix_ids.join(", ")}`;
       }
       if (data.warning) {
         showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
@@ -332,6 +356,7 @@
       const checked = selectedRowKeys.has(row.row_key) ? "checked" : "";
       tr.innerHTML = `
         <td class="select-cell"><input type="checkbox" data-row-key="${row.row_key}" ${checked} /></td>
+        <td>${row.scix_id || ""}</td>
         <td>${row.bibcode || ""}</td>
         <td>${row.title || ""}</td>
         <td>${row.score || ""}</td>
@@ -487,13 +512,14 @@
       }
     });
 
-    el("load_bibcodes_btn").addEventListener("click", async () => {
-      if (!parsedBibcodes.length) {
-        showFlash("Add at least one bibcode to the list first.", "err");
+    el("load_identifiers_btn").addEventListener("click", async () => {
+      if (!parsedIdentifiers.length) {
+        showFlash("Add at least one identifier to the list first.", "err");
         return;
       }
       try {
-        await runQueryWithPreset("By bibcode list");
+        const preset = parsedIdentifierType === "scix_id" ? SCIX_ID_LIST_PRESET : BIBCODE_LIST_PRESET;
+        await runQueryWithPreset(preset);
       } catch (err) {
         rowsData = [];
         renderRows();
@@ -559,21 +585,21 @@
       renderRows();
     });
 
-    el("bibcode_list_input").addEventListener("input", () => {
-      syncBibcodeState();
+    el("identifier_list_input").addEventListener("input", () => {
+      syncIdentifierState();
     });
 
-    el("bibcode_file").addEventListener("change", async (event) => {
+    el("identifier_file").addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file) {
-        syncBibcodeState();
+        syncIdentifierState();
         return;
       }
       try {
         const text = await file.text();
-        const parsed = parseBibcodes(text, true);
-        el("bibcode_list_input").value = parsed.join("\n");
-        syncBibcodeState();
+        const parsed = parseIdentifiers(text, true);
+        el("identifier_list_input").value = parsed.join("\n");
+        syncIdentifierState();
       } catch (err) {
         showFlash(`Failed to read file: ${err.message}`, "err");
       }
@@ -581,7 +607,7 @@
 
     initSelects();
     buildCategoryChecks();
-    syncBibcodeState();
+    syncIdentifierState();
   </script>
 </body>
 </html>
