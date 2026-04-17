@@ -30,6 +30,7 @@ ALLOWED_CATEGORIES = [
 
 ADS_API_URL = CONFIG.get("ADS_API_URL", "https://devapi.adsabs.harvard.edu/v1/search/query")
 MAX_BIBCODE_LIST_SIZE = 1000
+MAX_SCIX_ID_LIST_SIZE = 1000
 MAX_BULK_UPDATE_RECORDS = 500
 
 
@@ -39,6 +40,7 @@ class QuerySpec:
     needs_run_id: bool = False
     needs_bibcode_term: bool = False
     needs_bibcode_list: bool = False
+    needs_scix_id_list: bool = False
 
 
 QUERY_SPECS = [
@@ -48,6 +50,7 @@ QUERY_SPECS = [
     QuerySpec("By run_id", needs_run_id=True),
     QuerySpec("By bibcode contains", needs_bibcode_term=True),
     QuerySpec("By bibcode list", needs_bibcode_list=True),
+    QuerySpec("By scix_id list", needs_scix_id_list=True),
 ]
 QUERY_SPEC_BY_LABEL = {spec.label: spec for spec in QUERY_SPECS}
 
@@ -147,7 +150,17 @@ class DatabaseClient:
             {metadata_join}
         """
 
-    def run_query(self, *, spec: QuerySpec, run_id: str, bibcode_term: str, bibcode_list: List[str], limit: int):
+    def run_query(
+        self,
+        *,
+        spec: QuerySpec,
+        run_id: str,
+        bibcode_term: str,
+        scix_id_term: str,
+        bibcode_list: List[str],
+        scix_id_list: List[str],
+        limit: int,
+    ):
         where_clauses = []
         params = []
 
@@ -157,7 +170,10 @@ class DatabaseClient:
             where_clauses.append("s.run_id = %s")
             params.append(int(run_id))
 
-        if spec.needs_bibcode_term:
+        if scix_id_term.strip():
+            where_clauses.append("s.scix_id ILIKE %s")
+            params.append(f"%{scix_id_term.strip()}%")
+        elif spec.needs_bibcode_term:
             if not bibcode_term.strip():
                 raise ValueError("Bibcode text is required for this query.")
             where_clauses.append("s.bibcode ILIKE %s")
@@ -168,6 +184,12 @@ class DatabaseClient:
                 raise ValueError("A bibcode list is required for this query.")
             where_clauses.append("s.bibcode = ANY(%s)")
             params.append(bibcode_list)
+
+        if spec.needs_scix_id_list:
+            if not scix_id_list:
+                raise ValueError("A scix_id list is required for this query.")
+            where_clauses.append("s.scix_id = ANY(%s)")
+            params.append(scix_id_list)
 
         if spec.label == "Unvalidated records":
             where_clauses.append("COALESCE(fc.validated, FALSE) = FALSE")
@@ -181,6 +203,9 @@ class DatabaseClient:
         if spec.needs_bibcode_list:
             sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode)"
             params.append(bibcode_list)
+        elif spec.needs_scix_id_list:
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id)"
+            params.append(scix_id_list)
         else:
             sql = self._base_select() + where_sql + " ORDER BY s.id DESC LIMIT %s"
             params.append(limit)
@@ -395,11 +420,32 @@ def normalize_bibcode_list(items):
     return normalized
 
 
+def normalize_scix_id_list(items):
+    if not isinstance(items, list):
+        return []
+
+    normalized = []
+    seen = set()
+    for idx, item in enumerate(items):
+        value = str(item or "").strip()
+        if not value:
+            continue
+        lower = value.lower()
+        if idx == 0 and ("scix_id" in lower or "scixid" in lower):
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
 def build_row_key(row, idx):
     return ":".join(
         [
             str(row.get("score_id") or ""),
             str(row.get("final_collection_id") or ""),
+            str(row.get("scix_id") or ""),
             str(row.get("bibcode") or ""),
             str(idx),
         ]
@@ -468,13 +514,20 @@ def api_query(request):
     preset = str(payload.get("preset", "Latest records"))
     run_id = str(payload.get("run_id", ""))
     bibcode_term = str(payload.get("bibcode_term", ""))
+    scix_id_term = str(payload.get("scix_id_term", ""))
     bibcode_list = normalize_bibcode_list(payload.get("bibcode_list") or [])
+    scix_id_list = normalize_scix_id_list(payload.get("scix_id_list") or [])
     score_category = str(payload.get("score_category", ALLOWED_CATEGORIES[0]))
     ads_token = str(payload.get("ads_token", "")).strip()
 
     if len(bibcode_list) > MAX_BIBCODE_LIST_SIZE:
         return JsonResponse(
             {"ok": False, "error": f"Bibcode list exceeds the maximum of {MAX_BIBCODE_LIST_SIZE} items."},
+            status=400,
+        )
+    if len(scix_id_list) > MAX_SCIX_ID_LIST_SIZE:
+        return JsonResponse(
+            {"ok": False, "error": f"scix_id list exceeds the maximum of {MAX_SCIX_ID_LIST_SIZE} items."},
             status=400,
         )
 
@@ -494,7 +547,9 @@ def api_query(request):
             spec=spec,
             run_id=run_id,
             bibcode_term=bibcode_term,
+            scix_id_term=scix_id_term,
             bibcode_list=bibcode_list,
+            scix_id_list=scix_id_list,
             limit=limit,
         )
         warning = None
@@ -524,6 +579,7 @@ def api_query(request):
                     "record_idx": idx,
                     "row_key": build_row_key(row, idx),
                     "record": row,
+                    "scix_id": row.get("scix_id") or "",
                     "bibcode": row.get("bibcode") or "",
                     "title": row.get("title") or "",
                     "score": score_display,
@@ -534,6 +590,7 @@ def api_query(request):
             )
 
         found_bibcodes = {row.get("bibcode") for row in rows if row.get("bibcode")}
+        found_scix_ids = {row.get("scix_id") for row in rows if row.get("scix_id")}
 
         return JsonResponse(
             {
@@ -541,6 +598,7 @@ def api_query(request):
                 "rows": table_rows,
                 "count": len(table_rows),
                 "missing_bibcodes": [bib for bib in bibcode_list if bib not in found_bibcodes],
+                "missing_scix_ids": [scix_id for scix_id in scix_id_list if scix_id not in found_scix_ids],
                 "warning": warning,
             }
         )
