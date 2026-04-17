@@ -213,8 +213,12 @@
       if (!items.length) {
         return null;
       }
-      const allScixIds = items.every((item) => item.toLowerCase().startsWith("scix:"));
-      return allScixIds ? "scix_id" : "bibcode";
+      const hasScixIds = items.some((item) => item.toLowerCase().startsWith("scix:"));
+      const hasBibcodes = items.some((item) => !item.toLowerCase().startsWith("scix:"));
+      if (hasScixIds && hasBibcodes) {
+        return "mixed";
+      }
+      return hasScixIds ? "scix_id" : "bibcode";
     }
 
     function syncIdentifierState() {
@@ -224,6 +228,10 @@
       const fileName = el("identifier_file").files[0]?.name;
       if (!count) {
         el("identifier_list_status").textContent = fileName ? `Loaded ${fileName}, but no identifiers were parsed.` : "No identifier list loaded.";
+        return;
+      }
+      if (parsedIdentifierType === "mixed") {
+        el("identifier_list_status").textContent = "Mixed identifier types detected. Use only bibcodes or only scix_ids in the list.";
         return;
       }
       const typeLabel = parsedIdentifierType === "scix_id" ? "scix_id" : "bibcode";
@@ -247,7 +255,7 @@
 
       const scoreCategory = el("score_category").value;
       const preset = presetOverride || el("preset").value;
-      const payload = {
+      const data = await api("/api/query", "POST", {
         ...dbPayload(),
         preset,
         run_id: el("run_id").value,
@@ -258,9 +266,6 @@
         limit: el("limit").value,
         score_category: scoreCategory,
         ads_token: el("ads_token").value,
-      };
-      const data = await api("/api/query", "POST", {
-        ...payload,
       });
 
       rowsData = data.rows || [];
@@ -515,6 +520,10 @@
     el("load_identifiers_btn").addEventListener("click", async () => {
       if (!parsedIdentifiers.length) {
         showFlash("Add at least one identifier to the list first.", "err");
+        return;
+      }
+      if (parsedIdentifierType === "mixed") {
+        showFlash("Use only bibcodes or only scix_ids in the identifier list.", "err");
         return;
       }
       try {
