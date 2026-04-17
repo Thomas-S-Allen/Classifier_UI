@@ -39,6 +39,7 @@ class QuerySpec:
     label: str
     needs_run_id: bool = False
     needs_bibcode_term: bool = False
+    needs_scix_id_term: bool = False
     needs_bibcode_list: bool = False
     needs_scix_id_list: bool = False
 
@@ -49,6 +50,7 @@ QUERY_SPECS = [
     QuerySpec("Validated records"),
     QuerySpec("By run_id", needs_run_id=True),
     QuerySpec("By bibcode contains", needs_bibcode_term=True),
+    QuerySpec("By scix_id contains", needs_scix_id_term=True),
     QuerySpec("By bibcode list", needs_bibcode_list=True),
     QuerySpec("By scix_id list", needs_scix_id_list=True),
 ]
@@ -170,7 +172,9 @@ class DatabaseClient:
             where_clauses.append("s.run_id = %s")
             params.append(int(run_id))
 
-        if scix_id_term.strip():
+        if spec.needs_scix_id_term:
+            if not scix_id_term.strip():
+                raise ValueError("scix_id text is required for this query.")
             where_clauses.append("s.scix_id ILIKE %s")
             params.append(f"%{scix_id_term.strip()}%")
         elif spec.needs_bibcode_term:
