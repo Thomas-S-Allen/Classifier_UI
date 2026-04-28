@@ -29,6 +29,9 @@ ALLOWED_CATEGORIES = [
 ]
 
 ADS_API_URL = CONFIG.get("ADS_API_URL", "https://devapi.adsabs.harvard.edu/v1/search/query")
+MAX_BIBCODE_LIST_SIZE = 1000
+MAX_SCIX_ID_LIST_SIZE = 1000
+MAX_BULK_UPDATE_RECORDS = 500
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,9 @@ class QuerySpec:
     label: str
     needs_run_id: bool = False
     needs_bibcode_term: bool = False
+    needs_scix_id_term: bool = False
+    needs_bibcode_list: bool = False
+    needs_scix_id_list: bool = False
 
 
 QUERY_SPECS = [
@@ -44,6 +50,9 @@ QUERY_SPECS = [
     QuerySpec("Validated records"),
     QuerySpec("By run_id", needs_run_id=True),
     QuerySpec("By bibcode contains", needs_bibcode_term=True),
+    QuerySpec("By scix_id contains", needs_scix_id_term=True),
+    QuerySpec("By bibcode list", needs_bibcode_list=True),
+    QuerySpec("By scix_id list", needs_scix_id_list=True),
 ]
 QUERY_SPEC_BY_LABEL = {spec.label: spec for spec in QUERY_SPECS}
 
@@ -143,7 +152,17 @@ class DatabaseClient:
             {metadata_join}
         """
 
-    def run_query(self, *, spec: QuerySpec, run_id: str, bibcode_term: str, limit: int):
+    def run_query(
+        self,
+        *,
+        spec: QuerySpec,
+        run_id: str,
+        bibcode_term: str,
+        scix_id_term: str,
+        bibcode_list: List[str],
+        scix_id_list: List[str],
+        limit: int,
+    ):
         where_clauses = []
         params = []
 
@@ -153,11 +172,28 @@ class DatabaseClient:
             where_clauses.append("s.run_id = %s")
             params.append(int(run_id))
 
-        if spec.needs_bibcode_term:
+        if spec.needs_scix_id_term:
+            if not scix_id_term.strip():
+                raise ValueError("scix_id text is required for this query.")
+            where_clauses.append("s.scix_id ILIKE %s")
+            params.append(f"%{scix_id_term.strip()}%")
+        elif spec.needs_bibcode_term:
             if not bibcode_term.strip():
                 raise ValueError("Bibcode text is required for this query.")
             where_clauses.append("s.bibcode ILIKE %s")
             params.append(f"%{bibcode_term.strip()}%")
+
+        if spec.needs_bibcode_list:
+            if not bibcode_list:
+                raise ValueError("A bibcode list is required for this query.")
+            where_clauses.append("s.bibcode = ANY(%s)")
+            params.append(bibcode_list)
+
+        if spec.needs_scix_id_list:
+            if not scix_id_list:
+                raise ValueError("A scix_id list is required for this query.")
+            where_clauses.append("s.scix_id = ANY(%s)")
+            params.append(scix_id_list)
 
         if spec.label == "Unvalidated records":
             where_clauses.append("COALESCE(fc.validated, FALSE) = FALSE")
@@ -168,8 +204,15 @@ class DatabaseClient:
         if where_clauses:
             where_sql = " WHERE " + " AND ".join(where_clauses)
 
-        sql = self._base_select() + where_sql + " ORDER BY s.id DESC LIMIT %s"
-        params.append(limit)
+        if spec.needs_bibcode_list:
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode)"
+            params.append(bibcode_list)
+        elif spec.needs_scix_id_list:
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id)"
+            params.append(scix_id_list)
+        else:
+            sql = self._base_select() + where_sql + " ORDER BY s.id DESC LIMIT %s"
+            params.append(limit)
 
         with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
@@ -184,6 +227,7 @@ class DatabaseClient:
         scix_id,
         collection,
         validated,
+        commit=True,
     ):
         if not self.conn:
             raise RuntimeError("No database connection.")
@@ -253,7 +297,16 @@ class DatabaseClient:
                     (bibcode, scix_id, collection),
                 )
 
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
+
+    def commit(self):
+        if self.conn:
+            self.conn.commit()
+
+    def rollback(self):
+        if self.conn:
+            self.conn.rollback()
 
 
 class ADSClient:
@@ -352,6 +405,57 @@ def parse_json(request):
     return json.loads(raw)
 
 
+def normalize_bibcode_list(items):
+    if not isinstance(items, list):
+        return []
+
+    normalized = []
+    seen = set()
+    for idx, item in enumerate(items):
+        value = str(item or "").strip()
+        if not value:
+            continue
+        if idx == 0 and "bibcode" in value.lower():
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def normalize_scix_id_list(items):
+    if not isinstance(items, list):
+        return []
+
+    normalized = []
+    seen = set()
+    for idx, item in enumerate(items):
+        value = str(item or "").strip()
+        if not value:
+            continue
+        lower = value.lower()
+        if idx == 0 and ("scix_id" in lower or "scixid" in lower):
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def build_row_key(row, idx):
+    return ":".join(
+        [
+            str(row.get("score_id") or ""),
+            str(row.get("final_collection_id") or ""),
+            str(row.get("scix_id") or ""),
+            str(row.get("bibcode") or ""),
+            str(idx),
+        ]
+    )
+
+
 def open_db(payload) -> DatabaseClient:
     client = DatabaseClient()
     client.connect(
@@ -414,8 +518,22 @@ def api_query(request):
     preset = str(payload.get("preset", "Latest records"))
     run_id = str(payload.get("run_id", ""))
     bibcode_term = str(payload.get("bibcode_term", ""))
+    scix_id_term = str(payload.get("scix_id_term", ""))
+    bibcode_list = normalize_bibcode_list(payload.get("bibcode_list") or [])
+    scix_id_list = normalize_scix_id_list(payload.get("scix_id_list") or [])
     score_category = str(payload.get("score_category", ALLOWED_CATEGORIES[0]))
     ads_token = str(payload.get("ads_token", "")).strip()
+
+    if len(bibcode_list) > MAX_BIBCODE_LIST_SIZE:
+        return JsonResponse(
+            {"ok": False, "error": f"Bibcode list exceeds the maximum of {MAX_BIBCODE_LIST_SIZE} items."},
+            status=400,
+        )
+    if len(scix_id_list) > MAX_SCIX_ID_LIST_SIZE:
+        return JsonResponse(
+            {"ok": False, "error": f"scix_id list exceeds the maximum of {MAX_SCIX_ID_LIST_SIZE} items."},
+            status=400,
+        )
 
     try:
         limit = int(payload.get("limit", 200))
@@ -429,7 +547,15 @@ def api_query(request):
     client = None
     try:
         client = open_db(payload)
-        rows = client.run_query(spec=spec, run_id=run_id, bibcode_term=bibcode_term, limit=limit)
+        rows = client.run_query(
+            spec=spec,
+            run_id=run_id,
+            bibcode_term=bibcode_term,
+            scix_id_term=scix_id_term,
+            bibcode_list=bibcode_list,
+            scix_id_list=scix_id_list,
+            limit=limit,
+        )
         warning = None
 
         bibcodes = [row.get("bibcode") for row in rows if row.get("bibcode")]
@@ -455,7 +581,9 @@ def api_query(request):
             table_rows.append(
                 {
                     "record_idx": idx,
+                    "row_key": build_row_key(row, idx),
                     "record": row,
+                    "scix_id": row.get("scix_id") or "",
                     "bibcode": row.get("bibcode") or "",
                     "title": row.get("title") or "",
                     "score": score_display,
@@ -465,11 +593,16 @@ def api_query(request):
                 }
             )
 
+        found_bibcodes = {row.get("bibcode") for row in rows if row.get("bibcode")}
+        found_scix_ids = {row.get("scix_id") for row in rows if row.get("scix_id")}
+
         return JsonResponse(
             {
                 "ok": True,
                 "rows": table_rows,
                 "count": len(table_rows),
+                "missing_bibcodes": [bib for bib in bibcode_list if bib not in found_bibcodes],
+                "missing_scix_ids": [scix_id for scix_id in scix_id_list if scix_id not in found_scix_ids],
                 "warning": warning,
             }
         )
@@ -547,11 +680,23 @@ def api_update(request):
         return JsonResponse({"ok": False, "error": "Method not allowed"}, status=405)
 
     payload = parse_json(request)
-    row = payload.get("record") or {}
+    records = payload.get("records")
+    if records is None:
+        single_record = payload.get("record") or {}
+        records = [single_record] if single_record else []
     selected_categories = payload.get("selected_categories") or []
 
+    if not isinstance(records, list):
+        return JsonResponse({"ok": False, "error": "records must be a list."}, status=400)
     if not isinstance(selected_categories, list):
         return JsonResponse({"ok": False, "error": "selected_categories must be a list."}, status=400)
+    if not records:
+        return JsonResponse({"ok": False, "error": "Select at least one record to update."}, status=400)
+    if len(records) > MAX_BULK_UPDATE_RECORDS:
+        return JsonResponse(
+            {"ok": False, "error": f"Bulk update exceeds the maximum of {MAX_BULK_UPDATE_RECORDS} records."},
+            status=400,
+        )
 
     invalid = [cat for cat in selected_categories if cat not in ALLOWED_CATEGORIES]
     if invalid:
@@ -562,16 +707,26 @@ def api_update(request):
     client = None
     try:
         client = open_db(payload)
-        client.update_collection(
-            final_collection_id=row.get("final_collection_id"),
-            score_id=row.get("score_id"),
-            bibcode=row.get("bibcode"),
-            scix_id=row.get("scix_id"),
-            collection=selected_categories,
-            validated=validated,
+        for row in records:
+            client.update_collection(
+                final_collection_id=row.get("final_collection_id"),
+                score_id=row.get("score_id"),
+                bibcode=row.get("bibcode"),
+                scix_id=row.get("scix_id"),
+                collection=selected_categories,
+                validated=validated,
+                commit=False,
+            )
+        client.commit()
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": f"Updated {len(records)} records with collection: {selected_categories}",
+            }
         )
-        return JsonResponse({"ok": True, "message": f"Updated collection to: {selected_categories}"})
     except Exception as exc:
+        if client:
+            client.rollback()
         return JsonResponse(
             {"ok": False, "error": summarize_exception(exc), "details": str(exc)},
             status=400,

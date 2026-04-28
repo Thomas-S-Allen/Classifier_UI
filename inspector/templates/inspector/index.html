@@ -31,9 +31,14 @@
     .checks label { border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0; gap:2px; background:#fcfdff; color:var(--text); font-size:12px; }
     .checks input { min-width:auto; min-height:auto; }
     textarea { border:1px solid var(--line); border-radius:8px; width:100%; min-height:180px; padding:8px; resize:vertical; background:#fff; }
+    .query-grid { display:grid; gap:12px; grid-template-columns:2fr 1fr; align-items:start; }
+    .query-inputs { display:grid; gap:10px; }
+    .inline-meta { font-size:12px; color:var(--muted); }
+    .select-cell { width:38px; text-align:center; }
+    .select-cell input { min-width:auto; min-height:auto; }
     .flash { font-size:13px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#f8faff; color:var(--muted); display:none; }
     .flash.show { display:block; } .flash.err { border-color:#f5c2c7; background:#fff4f5; color:var(--danger);} .flash.ok { border-color:#b7ebd3; background:#f1fbf6; color:var(--ok);}
-    @media (max-width:980px) { .detail-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
+    @media (max-width:980px) { .detail-grid,.query-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
   </style>
 </head>
 <body>
@@ -56,18 +61,39 @@
 
     <section class="panel">
       <h2 class="title">Query</h2>
-      <div class="row">
-        <label>Preset
-          <select id="preset"></select>
-        </label>
-        <label>run_id<input id="run_id" /></label>
-        <label>Bibcode contains<input id="bibcode_term" /></label>
-        <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
-        <label>Score category
-          <select id="score_category"></select>
-        </label>
-        <button id="run_query_btn">Run Query</button>
-        <div class="meta">Select a row to inspect and update collections.</div>
+      <div class="query-grid">
+        <div class="query-inputs">
+          <div class="row">
+            <label>Preset
+              <select id="preset"></select>
+            </label>
+            <label>run_id<input id="run_id" /></label>
+            <label>Bibcode contains<input id="bibcode_term" /></label>
+            <label>scix_id contains<input id="scix_id_term" /></label>
+            <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
+            <label>Score category
+              <select id="score_category"></select>
+            </label>
+            <button id="run_query_btn">Run Query</button>
+          </div>
+          <div class="row">
+            <label style="min-width:280px; flex:1;">
+              Identifier list (comma separated)
+              <textarea id="identifier_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q or scix:abcd-1234"></textarea>
+            </label>
+            <div style="display:grid; gap:8px; min-width:220px;">
+              <label style="min-width:220px;">
+                Upload identifiers
+                <input id="identifier_file" type="file" accept=".txt,.csv,.tsv" />
+              </label>
+              <button id="load_identifiers_btn" type="button">Load Identifier List</button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="inline-meta" id="identifier_list_status">No identifier list loaded.</div>
+          </div>
+        </div>
+        <div class="meta">Select a row to inspect details. Use the table checkboxes to choose one or more rows for update.</div>
       </div>
       <div id="flash" class="flash"></div>
     </section>
@@ -78,6 +104,8 @@
         <table>
           <thead>
             <tr>
+              <th class="select-cell"><input id="select_all_rows" type="checkbox" title="Select all rows" /></th>
+              <th>scix_id</th>
               <th>Bibcode</th>
               <th>Title</th>
               <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
@@ -119,8 +147,14 @@
   <script>
     const allowedCategories = JSON.parse(document.getElementById("allowed-categories").textContent);
     const querySpecs = JSON.parse(document.getElementById("query-specs").textContent);
+    const LARGE_BATCH_CONFIRM_THRESHOLD = 100;
+    const BIBCODE_LIST_PRESET = "By bibcode list";
+    const SCIX_ID_LIST_PRESET = "By scix_id list";
     let rowsData = [];
     let selectedIdx = -1;
+    let selectedRowKeys = new Set();
+    let parsedIdentifiers = [];
+    let parsedIdentifierType = null;
     let scoreSortDir = "desc";
 
     const el = (id) => document.getElementById(id);
@@ -151,6 +185,121 @@
       const f = el("flash");
       f.textContent = "";
       f.className = "flash";
+    }
+
+    function parseIdentifiers(rawText, splitOnNewlinesOnly = false) {
+      const pieces = splitOnNewlinesOnly ? rawText.split(/\r?\n/) : rawText.split(/[\r\n,]+/);
+      const out = [];
+      const seen = new Set();
+      pieces.forEach((piece, idx) => {
+        const value = piece.trim();
+        if (!value) {
+          return;
+        }
+        const lower = value.toLowerCase();
+        if (idx === 0 && (lower.includes("bibcode") || lower.includes("scix_id") || lower.includes("scixid"))) {
+          return;
+        }
+        if (seen.has(value)) {
+          return;
+        }
+        seen.add(value);
+        out.push(value);
+      });
+      return out;
+    }
+
+    function detectIdentifierType(items) {
+      if (!items.length) {
+        return null;
+      }
+      const hasScixIds = items.some((item) => item.toLowerCase().startsWith("scix:"));
+      const hasBibcodes = items.some((item) => !item.toLowerCase().startsWith("scix:"));
+      if (hasScixIds && hasBibcodes) {
+        return "mixed";
+      }
+      return hasScixIds ? "scix_id" : "bibcode";
+    }
+
+    function syncIdentifierState() {
+      parsedIdentifiers = parseIdentifiers(el("identifier_list_input").value || "");
+      parsedIdentifierType = detectIdentifierType(parsedIdentifiers);
+      const count = parsedIdentifiers.length;
+      const fileName = el("identifier_file").files[0]?.name;
+      if (!count) {
+        el("identifier_list_status").textContent = fileName ? `Loaded ${fileName}, but no identifiers were parsed.` : "No identifier list loaded.";
+        return;
+      }
+      if (parsedIdentifierType === "mixed") {
+        el("identifier_list_status").textContent = "Mixed identifier types detected. Use only bibcodes or only scix_ids in the list.";
+        return;
+      }
+      const typeLabel = parsedIdentifierType === "scix_id" ? "scix_id" : "bibcode";
+      el("identifier_list_status").textContent = fileName ? `${count} ${typeLabel}s parsed from ${fileName}.` : `${count} ${typeLabel}s parsed from text input.`;
+    }
+
+    function clearSelectionState() {
+      selectedIdx = -1;
+      selectedRowKeys = new Set();
+      el("select_all_rows").checked = false;
+      el("collection_label").textContent = "No row selected.";
+      el("scores_text").value = "";
+      el("abstract_text").value = "";
+      clearChecks();
+    }
+
+    function selectedRowsForUpdate() {
+      const checkedRows = rowsData.filter((row) => selectedRowKeys.has(row.row_key));
+      if (checkedRows.length) {
+        return checkedRows;
+      }
+      if (selectedIdx >= 0 && selectedIdx < rowsData.length) {
+        return [rowsData[selectedIdx]];
+      }
+      return [];
+    }
+
+    async function runQueryWithPreset(presetOverride = null) {
+      clearFlash();
+      setStatus("Query running...");
+      clearSelectionState();
+
+      const scoreCategory = el("score_category").value;
+      const preset = presetOverride || el("preset").value;
+      const data = await api("/api/query", "POST", {
+        ...dbPayload(),
+        preset,
+        run_id: el("run_id").value,
+        bibcode_term: el("bibcode_term").value,
+        scix_id_term: el("scix_id_term").value,
+        bibcode_list: preset === BIBCODE_LIST_PRESET ? parsedIdentifiers : [],
+        scix_id_list: preset === SCIX_ID_LIST_PRESET ? parsedIdentifiers : [],
+        limit: el("limit").value,
+        score_category: scoreCategory,
+        ads_token: el("ads_token").value,
+      });
+
+      rowsData = data.rows || [];
+      if (preset !== BIBCODE_LIST_PRESET && preset !== SCIX_ID_LIST_PRESET) {
+        sortRowsByScore();
+      } else {
+        el("score_col_header").textContent = "Score";
+      }
+      renderRows();
+      setStatus("Connected", "ok");
+
+      let msg = `Loaded ${data.count} rows`;
+      if (preset === BIBCODE_LIST_PRESET && data.missing_bibcodes?.length) {
+        msg += `. Missing bibcodes: ${data.missing_bibcodes.join(", ")}`;
+      }
+      if (preset === SCIX_ID_LIST_PRESET && data.missing_scix_ids?.length) {
+        msg += `. Missing scix_ids: ${data.missing_scix_ids.join(", ")}`;
+      }
+      if (data.warning) {
+        showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
+      } else {
+        showFlash(msg, "ok");
+      }
     }
 
     function initSelects() {
@@ -220,7 +369,10 @@
     function rowToTr(row, idx) {
       const tr = document.createElement("tr");
       if (idx === selectedIdx) { tr.classList.add("selected"); }
+      const checked = selectedRowKeys.has(row.row_key) ? "checked" : "";
       tr.innerHTML = `
+        <td class="select-cell"><input type="checkbox" data-row-key="${row.row_key}" ${checked} /></td>
+        <td>${row.scix_id || ""}</td>
         <td>${row.bibcode || ""}</td>
         <td>${row.title || ""}</td>
         <td>${row.score || ""}</td>
@@ -228,6 +380,18 @@
         <td>${row.validated ? "True" : "False"}</td>
         <td>${(row.collection || []).join(", ")}</td>
       `;
+      const cb = tr.querySelector('input[type="checkbox"]');
+      cb.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          selectedRowKeys.add(row.row_key);
+        } else {
+          selectedRowKeys.delete(row.row_key);
+        }
+        syncSelectAllState();
+      });
       tr.addEventListener("click", () => selectRow(idx));
       return tr;
     }
@@ -236,6 +400,35 @@
       const body = el("rows");
       body.innerHTML = "";
       rowsData.forEach((row, idx) => body.appendChild(rowToTr(row, idx)));
+      syncSelectAllState();
+    }
+
+    function syncSelectAllState() {
+      const allChecked = rowsData.length > 0 && rowsData.every((row) => selectedRowKeys.has(row.row_key));
+      el("select_all_rows").checked = allChecked;
+    }
+
+    function patchUpdatedRows(updatedRowKeys, categories, validated) {
+      const categoryCopy = [...categories];
+      rowsData = rowsData.map((row) => {
+        if (!updatedRowKeys.has(row.row_key)) {
+          return row;
+        }
+
+        const nextRecord = {
+          ...row.record,
+          collection: categoryCopy,
+          override: categoryCopy,
+          validated,
+        };
+
+        return {
+          ...row,
+          record: nextRecord,
+          collection: categoryCopy,
+          validated,
+        };
+      });
     }
 
     function scoreToNumber(v) {
@@ -268,7 +461,9 @@
         });
         const detail = data.detail;
 
-        el("collection_label").textContent = detail.collection_label;
+        const selectedCount = selectedRowKeys.size;
+        const suffix = selectedCount ? `    Rows selected for update: ${selectedCount}` : "";
+        el("collection_label").textContent = `${detail.collection_label}${suffix}`;
         el("scores_text").value = detail.scores_text;
         el("abstract_text").value = detail.abstract_text;
 
@@ -323,37 +518,28 @@
     });
 
     el("run_query_btn").addEventListener("click", async () => {
-      clearFlash();
-      setStatus("Query running...");
-      selectedIdx = -1;
-      el("collection_label").textContent = "No row selected.";
-      el("scores_text").value = "";
-      el("abstract_text").value = "";
-      clearChecks();
-
       try {
-        const scoreCategory = el("score_category").value;
-        const data = await api("/api/query", "POST", {
-          ...dbPayload(),
-          preset: el("preset").value,
-          run_id: el("run_id").value,
-          bibcode_term: el("bibcode_term").value,
-          limit: el("limit").value,
-          score_category: scoreCategory,
-          ads_token: el("ads_token").value,
-        });
-
-        rowsData = data.rows || [];
-        sortRowsByScore();
+        await runQueryWithPreset();
+      } catch (err) {
+        rowsData = [];
         renderRows();
-        setStatus("Connected", "ok");
+        setStatus("Connected");
+        showFlash(err.message, "err");
+      }
+    });
 
-        const msg = `Loaded ${data.count} rows`;
-        if (data.warning) {
-          showFlash(`${msg}. ADS warning: ${data.warning}`, "err");
-        } else {
-          showFlash(msg, "ok");
-        }
+    el("load_identifiers_btn").addEventListener("click", async () => {
+      if (!parsedIdentifiers.length) {
+        showFlash("Add at least one identifier to the list first.", "err");
+        return;
+      }
+      if (parsedIdentifierType === "mixed") {
+        showFlash("Use only bibcodes or only scix_ids in the identifier list.", "err");
+        return;
+      }
+      try {
+        const preset = parsedIdentifierType === "scix_id" ? SCIX_ID_LIST_PRESET : BIBCODE_LIST_PRESET;
+        await runQueryWithPreset(preset);
       } catch (err) {
         rowsData = [];
         renderRows();
@@ -363,23 +549,43 @@
     });
 
     el("submit_btn").addEventListener("click", async () => {
-      if (selectedIdx < 0 || selectedIdx >= rowsData.length) {
+      const selectedRows = selectedRowsForUpdate();
+      const selectedRecords = selectedRows.map((row) => row.record);
+      if (!selectedRecords.length) {
         showFlash("Select a record first.", "err");
         return;
+      }
+      if (selectedRecords.length >= LARGE_BATCH_CONFIRM_THRESHOLD) {
+        const confirmed = window.confirm(`You are about to update ${selectedRecords.length} records at once. Continue?`);
+        if (!confirmed) {
+          return;
+        }
       }
       clearFlash();
       setStatus("Updating...");
 
       try {
+        const updatedRowKeys = new Set(selectedRows.map((row) => row.row_key));
+        const categories = selectedCategories();
+        const validated = !!el("validated").checked;
         const data = await api("/api/update", "POST", {
           ...dbPayload(),
-          record: rowsData[selectedIdx].record,
-          selected_categories: selectedCategories(),
-          validated: !!el("validated").checked,
+          records: selectedRecords,
+          selected_categories: categories,
+          validated,
         });
+        patchUpdatedRows(updatedRowKeys, categories, validated);
+        selectedRowKeys = new Set();
+        renderRows();
+        if (selectedIdx >= 0 && selectedIdx < rowsData.length) {
+          if (updatedRowKeys.has(rowsData[selectedIdx].row_key)) {
+            await selectRow(selectedIdx);
+          } else {
+            syncSelectAllState();
+          }
+        }
         setStatus("Connected", "ok");
         showFlash(data.message || "Update successful.", "ok");
-        el("run_query_btn").click();
       } catch (err) {
         setStatus("Connected");
         showFlash(err.message, "err");
@@ -390,9 +596,38 @@
       clearChecks();
     });
 
+    el("select_all_rows").addEventListener("change", (event) => {
+      if (event.target.checked) {
+        selectedRowKeys = new Set(rowsData.map((row) => row.row_key));
+      } else {
+        selectedRowKeys = new Set();
+      }
+      renderRows();
+    });
+
+    el("identifier_list_input").addEventListener("input", () => {
+      syncIdentifierState();
+    });
+
+    el("identifier_file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) {
+        syncIdentifierState();
+        return;
+      }
+      try {
+        const text = await file.text();
+        const parsed = parseIdentifiers(text, true);
+        el("identifier_list_input").value = parsed.join("\n");
+        syncIdentifierState();
+      } catch (err) {
+        showFlash(`Failed to read file: ${err.message}`, "err");
+      }
+    });
+
     initSelects();
     buildCategoryChecks();
-    sortRowsByScore();
+    syncIdentifierState();
   </script>
 </body>
 </html>
