@@ -186,13 +186,13 @@ class DatabaseClient:
         if spec.needs_bibcode_list:
             if not bibcode_list:
                 raise ValueError("A bibcode list is required for this query.")
-            where_clauses.append("s.bibcode = ANY(%s)")
+            where_clauses.append("s.bibcode::text = ANY(%s::text[])")
             params.append(bibcode_list)
 
         if spec.needs_scix_id_list:
             if not scix_id_list:
                 raise ValueError("A scix_id list is required for this query.")
-            where_clauses.append("s.scix_id = ANY(%s)")
+            where_clauses.append("s.scix_id::text = ANY(%s::text[])")
             params.append(scix_id_list)
 
         if spec.label == "Unvalidated records":
@@ -205,10 +205,10 @@ class DatabaseClient:
             where_sql = " WHERE " + " AND ".join(where_clauses)
 
         if spec.needs_bibcode_list:
-            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode)"
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode::text)"
             params.append(bibcode_list)
         elif spec.needs_scix_id_list:
-            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id)"
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id::text)"
             params.append(scix_id_list)
         else:
             sql = self._base_select() + where_sql + " ORDER BY s.id DESC LIMIT %s"
