@@ -136,17 +136,30 @@ class DatabaseClient:
                 SELECT id, collection, validated
                 FROM final_collection
                 WHERE score_id = s.id
-                    OR (score_id IS NULL AND bibcode = s.bibcode)
+                    OR (bibcode IS NOT NULL AND bibcode = s.bibcode)
+                    OR (scix_id IS NOT NULL AND scix_id = s.scix_id)
                 ORDER BY
-                    CASE WHEN score_id = s.id THEN 0 ELSE 1 END,
+                    CASE
+                        WHEN score_id = s.id THEN 0
+                        WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1
+                        WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 2
+                        ELSE 3
+                    END,
                     created DESC
                 LIMIT 1
             ) fc ON TRUE
             LEFT JOIN LATERAL (
                 SELECT override
                 FROM overrides
-                WHERE bibcode = s.bibcode
-                ORDER BY created DESC
+                WHERE (scix_id IS NOT NULL AND scix_id = s.scix_id)
+                    OR (bibcode IS NOT NULL AND bibcode = s.bibcode)
+                ORDER BY
+                    CASE
+                        WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 0
+                        WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1
+                        ELSE 2
+                    END,
+                    created DESC
                 LIMIT 1
             ) ov ON TRUE
             {metadata_join}
@@ -186,13 +199,13 @@ class DatabaseClient:
         if spec.needs_bibcode_list:
             if not bibcode_list:
                 raise ValueError("A bibcode list is required for this query.")
-            where_clauses.append("s.bibcode = ANY(%s)")
+            where_clauses.append("s.bibcode::text = ANY(%s::text[])")
             params.append(bibcode_list)
 
         if spec.needs_scix_id_list:
             if not scix_id_list:
                 raise ValueError("A scix_id list is required for this query.")
-            where_clauses.append("s.scix_id = ANY(%s)")
+            where_clauses.append("s.scix_id::text = ANY(%s::text[])")
             params.append(scix_id_list)
 
         if spec.label == "Unvalidated records":
@@ -205,10 +218,10 @@ class DatabaseClient:
             where_sql = " WHERE " + " AND ".join(where_clauses)
 
         if spec.needs_bibcode_list:
-            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode)"
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.bibcode::text)"
             params.append(bibcode_list)
         elif spec.needs_scix_id_list:
-            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id)"
+            sql = self._base_select() + where_sql + " ORDER BY array_position(%s::text[], s.scix_id::text)"
             params.append(scix_id_list)
         else:
             sql = self._base_select() + where_sql + " ORDER BY s.id DESC LIMIT %s"
@@ -259,10 +272,10 @@ class DatabaseClient:
             if updated == 0:
                 cur.execute(
                     """
-                    INSERT INTO final_collection (bibcode, score_id, collection, validated)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO final_collection (bibcode, scix_id, score_id, collection, validated)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (bibcode, score_id, collection, validated),
+                    (bibcode, scix_id, score_id, collection, validated),
                 )
 
             override_updated = 0
@@ -318,42 +331,56 @@ class ADSClient:
         for idx in range(0, len(items), size):
             yield items[idx : idx + size]
 
-    def fetch_titles(self, bibcodes, token):
+    def fetch_titles(self, identifiers, token):
         if not token:
             return {}
 
-        unique_bibcodes = [b for b in dict.fromkeys(bibcodes) if b]
-        if not unique_bibcodes:
+        unique_identifiers = [identifier for identifier in dict.fromkeys(identifiers) if identifier]
+        if not unique_identifiers:
             return {}
 
-        titles_by_bibcode = {}
+        titles_by_identifier = {}
         headers = {"Authorization": f"Bearer {token.strip()}"}
 
-        for chunk in self._chunk(unique_bibcodes, 100):
-            query = " OR ".join(f'"{bibcode}"' for bibcode in chunk)
-            params = {"q": f"bibcode:({query})", "fl": "bibcode,title", "rows": len(chunk)}
+        for chunk in self._chunk(unique_identifiers, 100):
+            query = " OR ".join(f'"{identifier}"' for identifier in chunk)
+            params = {"q": f"identifier:({query})", "fl": "identifier,bibcode,title", "rows": len(chunk)}
             response = requests.get(self.base_url, headers=headers, params=params, timeout=20)
             response.raise_for_status()
             docs = response.json().get("response", {}).get("docs", [])
             for doc in docs:
-                bibcode = doc.get("bibcode")
                 title = doc.get("title")
                 if isinstance(title, list):
                     title = title[0] if title else ""
-                if bibcode and title:
-                    titles_by_bibcode[bibcode] = title
+                if not title:
+                    continue
 
-        return titles_by_bibcode
+                doc_identifiers = doc.get("identifier") or []
+                if isinstance(doc_identifiers, str):
+                    doc_identifiers = [doc_identifiers]
+                if doc.get("bibcode"):
+                    doc_identifiers = [*doc_identifiers, doc["bibcode"]]
 
-    def fetch_abstract(self, bibcode, token):
-        if not token or not bibcode:
+                for identifier in chunk:
+                    if identifier in doc_identifiers:
+                        titles_by_identifier[identifier] = title
+
+        return titles_by_identifier
+
+    def fetch_abstract(self, identifiers, token):
+        if not token or not identifiers:
             return ""
         headers = {"Authorization": f"Bearer {token.strip()}"}
-        params = {"q": f'bibcode:"{bibcode}"', "fl": "bibcode,abstract", "rows": 1}
-        response = requests.get(self.base_url, headers=headers, params=params, timeout=20)
-        response.raise_for_status()
-        docs = response.json().get("response", {}).get("docs", [])
-        return docs[0].get("abstract") if docs else ""
+        for identifier in identifiers:
+            if not identifier:
+                continue
+            params = {"q": f'identifier:"{identifier}"', "fl": "identifier,bibcode,abstract", "rows": 1}
+            response = requests.get(self.base_url, headers=headers, params=params, timeout=20)
+            response.raise_for_status()
+            docs = response.json().get("response", {}).get("docs", [])
+            if docs and docs[0].get("abstract"):
+                return docs[0]["abstract"]
+        return ""
 
 
 def summarize_exception(exc: Exception) -> str:
@@ -454,6 +481,15 @@ def build_row_key(row, idx):
             str(idx),
         ]
     )
+
+
+def ads_identifiers_for_row(row):
+    identifiers = []
+    for value in (row.get("scix_id"), row.get("bibcode")):
+        text = str(value or "").strip()
+        if text and text not in identifiers:
+            identifiers.append(text)
+    return identifiers
 
 
 def open_db(payload) -> DatabaseClient:
@@ -558,14 +594,16 @@ def api_query(request):
         )
         warning = None
 
-        bibcodes = [row.get("bibcode") for row in rows if row.get("bibcode")]
-        if bibcodes and ads_token:
+        row_identifiers = {idx: ads_identifiers_for_row(row) for idx, row in enumerate(rows)}
+        ads_identifiers = [identifier for identifiers in row_identifiers.values() for identifier in identifiers]
+        if ads_identifiers and ads_token:
             try:
-                titles = ads.fetch_titles(bibcodes, ads_token)
-                for row in rows:
-                    bib = row.get("bibcode")
-                    if bib in titles:
-                        row["title"] = titles[bib]
+                titles = ads.fetch_titles(ads_identifiers, ads_token)
+                for idx, row in enumerate(rows):
+                    for identifier in row_identifiers[idx]:
+                        if identifier in titles:
+                            row["title"] = titles[identifier]
+                            break
             except Exception as exc:
                 warning = summarize_exception(exc)
 
@@ -653,9 +691,9 @@ def api_record(request):
         )
 
     abstract = row.get("abstract") or ""
-    if not abstract and ads_token and row.get("bibcode"):
+    if not abstract and ads_token:
         try:
-            abstract = ADSClient().fetch_abstract(bibcode=row.get("bibcode"), token=ads_token)
+            abstract = ADSClient().fetch_abstract(identifiers=ads_identifiers_for_row(row), token=ads_token)
         except Exception as exc:
             abstract = f"(ADS abstract lookup failed: {summarize_exception(exc)})"
     if not abstract:
@@ -680,7 +718,10 @@ def api_update(request):
         return JsonResponse({"ok": False, "error": "Method not allowed"}, status=405)
 
     payload = parse_json(request)
-    records = payload.get("records") or []
+    records = payload.get("records")
+    if records is None:
+        single_record = payload.get("record") or {}
+        records = [single_record] if single_record else []
     selected_categories = payload.get("selected_categories") or []
 
     if not isinstance(records, list):
