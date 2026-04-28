@@ -114,6 +114,45 @@ class ApiQueryTests(SimpleTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["missing_bibcodes"], ["2024Natur.632..287O"])
         self.assertEqual([row["bibcode"] for row in payload["rows"]], ["2024Natur.635..755S"])
+        self.assertTrue(fake_client.closed)
+
+    def test_scix_id_list_query_reports_missing_scix_ids(self):
+        request = self.factory.post(
+            "/api/query",
+            data=json.dumps(
+                {
+                    "preset": "By scix_id list",
+                    "scix_id_list": ["scix:1", "scix:2"],
+                    "score_category": "astrophysics",
+                    "limit": 20,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        returned_rows = [
+            {
+                "score_id": 1,
+                "final_collection_id": 2,
+                "scix_id": "scix:1",
+                "bibcode": "2024Natur.635..755S",
+                "scores": '{"scores": {"astrophysics": 0.91}}',
+                "title": "Example title",
+                "run_id": 7,
+                "validated": False,
+                "collection": [],
+            }
+        ]
+
+        fake_client = _ApiQueryFakeClient(returned_rows)
+        with patch("inspector.views.open_db", return_value=fake_client):
+            response = api_query(request)
+
+        payload = json.loads(response.content)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["missing_scix_ids"], ["scix:2"])
+        self.assertEqual([row["scix_id"] for row in payload["rows"]], ["scix:1"])
+        self.assertTrue(fake_client.closed)
 
 
 class _ApiQueryFakeClient:
