@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from inspector.views import DatabaseClient, QUERY_SPEC_BY_LABEL, api_query
+from inspector.views import ADSClient, DatabaseClient, QUERY_SPEC_BY_LABEL, api_query
 
 
 class _FakeCursor:
@@ -120,6 +120,50 @@ class DatabaseClientRunQueryTests(SimpleTestCase):
             params for sql, params in sql_statements if "INSERT INTO final_collection" in sql
         )
         self.assertEqual(final_collection_insert, (None, "scix:abc", 18, ["astrophysics"], False))
+
+
+class ADSClientTests(SimpleTestCase):
+    def test_fetch_titles_queries_ads_by_identifier(self):
+        client = ADSClient()
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "response": {
+                        "docs": [
+                            {
+                                "bibcode": "2022Natur.608..472D",
+                                "identifier": ["scix:abc", "2022Natur.608..472D"],
+                                "title": ["Europe's energy crisis - climate community must speak up"],
+                            }
+                        ]
+                    }
+                }
+
+        with patch("inspector.views.requests.get", return_value=_Response()) as mock_get:
+            titles = client.fetch_titles(["scix:abc"], "token")
+
+        self.assertEqual(titles["scix:abc"], "Europe's energy crisis - climate community must speak up")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["q"], 'identifier:("scix:abc")')
+
+    def test_fetch_abstract_queries_ads_by_identifier(self):
+        client = ADSClient()
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"response": {"docs": [{"abstract": "Example abstract"}]}}
+
+        with patch("inspector.views.requests.get", return_value=_Response()) as mock_get:
+            abstract = client.fetch_abstract(["scix:abc"], "token")
+
+        self.assertEqual(abstract, "Example abstract")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["q"], 'identifier:"scix:abc"')
 
 
 class ApiQueryTests(SimpleTestCase):
