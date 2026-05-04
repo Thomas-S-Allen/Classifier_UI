@@ -19,12 +19,15 @@
     button:hover { background:var(--primary-2); }
     button.secondary { background:#fff; color:var(--text); border-color:var(--line); }
     .status { margin-left:auto; font-size:13px; color:var(--muted); font-weight:600; }
-    .status.ok { color:var(--ok); } .status.err { color:var(--danger); }
+    .status.ok { color:var(--ok); }
+    .status.err { color:var(--danger); }
     .table-wrap { overflow:auto; max-height:45vh; border:1px solid var(--line); border-radius:8px; }
     table { width:100%; border-collapse:collapse; background:#fff; min-width:980px; }
     th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
     th { position:sticky; top:0; z-index:2; background:#f9fbff; font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); }
-    tbody tr { cursor:pointer; } tbody tr:hover { background:#f3f7ff; } tbody tr.selected { background:#e8f0ff; }
+    tbody tr { cursor:pointer; }
+    tbody tr:hover { background:#f3f7ff; }
+    tbody tr.selected { background:#e8f0ff; }
     .detail-grid { display:grid; gap:10px; grid-template-columns:2fr 1fr; }
     .meta { font-size:13px; color:var(--muted); }
     .checks { display:grid; gap:8px; grid-template-columns:repeat(4,minmax(130px,1fr)); }
@@ -37,8 +40,24 @@
     .select-cell { width:38px; text-align:center; }
     .select-cell input { min-width:auto; min-height:auto; }
     .flash { font-size:13px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#f8faff; color:var(--muted); display:none; }
-    .flash.show { display:block; } .flash.err { border-color:#f5c2c7; background:#fff4f5; color:var(--danger);} .flash.ok { border-color:#b7ebd3; background:#f1fbf6; color:var(--ok);}
-    @media (max-width:980px) { .detail-grid,.query-grid { grid-template-columns:1fr; } .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); } }
+    .flash.show { display:block; }
+    .flash.err { border-color:#f5c2c7; background:#fff4f5; color:var(--danger); }
+    .flash.ok { border-color:#b7ebd3; background:#f1fbf6; color:var(--ok); }
+    .tab-bar { display:flex; flex-wrap:wrap; gap:8px; }
+    .tab-btn { background:#fff; color:var(--muted); border-color:var(--line); }
+    .tab-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:grid; gap:12px; }
+    .validator-grid { display:grid; gap:12px; grid-template-columns:2fr 1fr; align-items:start; }
+    .validator-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid var(--line); border-radius:999px; background:#f9fbff; font-size:12px; color:var(--muted); }
+    .hidden { display:none !important; }
+    @media (max-width:980px) {
+      .detail-grid,
+      .query-grid,
+      .validator-grid { grid-template-columns:1fr; }
+      .checks { grid-template-columns:repeat(2,minmax(130px,1fr)); }
+    }
   </style>
 </head>
 <body>
@@ -46,101 +65,178 @@
   {{ query_specs|json_script:"query-specs" }}
   <main class="wrap">
     <section class="panel">
-      <h2 class="title">Database Connection</h2>
-      <div class="row">
-        <label>Host<input id="host" value="{{ defaults.host }}" /></label>
-        <label>Port<input id="port" value="{{ defaults.port }}" /></label>
-        <label>DB<input id="dbname" value="{{ defaults.dbname }}" /></label>
-        <label>User<input id="user" value="{{ defaults.user }}" /></label>
-        <label>Password<input id="password" type="password" value="{{ defaults.password }}" /></label>
-        <label>ADS Token<input id="ads_token" type="password" value="{{ defaults.ads_token }}" /></label>
-        <button id="connect_btn">Connect</button>
-        <div class="status" id="status">Not connected</div>
+      <div class="tab-bar">
+        <button id="tab_db_inspector" class="tab-btn active" type="button" data-tab="db_inspector">Database Inspector</button>
+        <button id="tab_pre_ingest_validator" class="tab-btn" type="button" data-tab="pre_ingest_validator">Pre-ingest Validator</button>
       </div>
     </section>
 
-    <section class="panel">
-      <h2 class="title">Query</h2>
-      <div class="query-grid">
-        <div class="query-inputs">
-          <div class="row">
-            <label>Preset
-              <select id="preset"></select>
-            </label>
-            <label>run_id<input id="run_id" /></label>
-            <label>Bibcode contains<input id="bibcode_term" /></label>
-            <label>scix_id contains<input id="scix_id_term" /></label>
-            <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
-            <label>Score category
-              <select id="score_category"></select>
-            </label>
-            <button id="run_query_btn">Run Query</button>
-          </div>
-          <div class="row">
-            <label style="min-width:280px; flex:1;">
-              Identifier list (comma separated or one per line)
-              <textarea id="identifier_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q&#10;1997ApJ...491..123A&#10;scix:abcd-1234"></textarea>
-            </label>
-            <div style="display:grid; gap:8px; min-width:220px;">
-              <label style="min-width:220px;">
-                Upload identifiers
-                <input id="identifier_file" type="file" accept=".txt,.csv,.tsv" />
+    <section id="panel_db_inspector" class="tab-panel active">
+      <section class="panel">
+        <h2 class="title">Database Connection</h2>
+        <div class="row">
+          <label>Host<input id="host" value="{{ defaults.host }}" /></label>
+          <label>Port<input id="port" value="{{ defaults.port }}" /></label>
+          <label>DB<input id="dbname" value="{{ defaults.dbname }}" /></label>
+          <label>User<input id="user" value="{{ defaults.user }}" /></label>
+          <label>Password<input id="password" type="password" value="{{ defaults.password }}" /></label>
+          <label>ADS Token<input id="ads_token" type="password" value="{{ defaults.ads_token }}" /></label>
+          <button id="connect_btn">Connect</button>
+          <div class="status" id="status">Not connected</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="title">Query</h2>
+        <div class="query-grid">
+          <div class="query-inputs">
+            <div class="row">
+              <label>Preset
+                <select id="preset"></select>
               </label>
-              <button id="load_identifiers_btn" type="button">Load Identifier List</button>
+              <label>run_id<input id="run_id" /></label>
+              <label>Bibcode contains<input id="bibcode_term" /></label>
+              <label>scix_id contains<input id="scix_id_term" /></label>
+              <label>Limit<input id="limit" value="{{ defaults.limit }}" /></label>
+              <label>Score category
+                <select id="score_category"></select>
+              </label>
+              <button id="run_query_btn">Run Query</button>
+            </div>
+            <div class="row">
+              <label style="min-width:280px; flex:1;">
+                Identifier list (comma separated or one per line)
+                <textarea id="identifier_list_input" style="min-height:96px;" placeholder="1997ApJ...490..493Q&#10;1997ApJ...491..123A&#10;scix:abcd-1234"></textarea>
+              </label>
+              <div style="display:grid; gap:8px; min-width:220px;">
+                <label style="min-width:220px;">
+                  Upload identifiers
+                  <input id="identifier_file" type="file" accept=".txt,.csv,.tsv" />
+                </label>
+                <button id="load_identifiers_btn" type="button">Load Identifier List</button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="inline-meta" id="identifier_list_status">No identifier list loaded.</div>
             </div>
           </div>
-          <div class="row">
-            <div class="inline-meta" id="identifier_list_status">No identifier list loaded.</div>
+          <div class="meta">Select a row to inspect details. Use the table checkboxes to choose one or more rows for update.</div>
+        </div>
+        <div id="flash" class="flash"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="title">Results</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="select-cell"><input id="select_all_rows" type="checkbox" title="Select all rows" /></th>
+                <th>scix_id</th>
+                <th>Bibcode</th>
+                <th>Title</th>
+                <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
+                <th>run_id</th>
+                <th>validated</th>
+                <th>collection</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="title">Details and Update</h2>
+        <div class="detail-grid">
+          <div>
+            <div class="meta" id="collection_label">No row selected.</div>
+            <div class="row" style="margin-top:8px;margin-bottom:8px;">
+              <label style="flex-direction:row; align-items:center; gap:8px; min-width:0;">
+                <input id="validated" type="checkbox" checked />
+                Set validated=True when updating
+              </label>
+            </div>
+            <div id="category_checks" class="checks"></div>
+            <div class="row" style="margin-top:10px;">
+              <button id="submit_btn">Submit Selection</button>
+              <button id="clear_btn" class="secondary">Clear Selection</button>
+            </div>
+          </div>
+          <div>
+            <label>Scores<textarea id="scores_text" readonly></textarea></label>
+            <label>Abstract<textarea id="abstract_text" readonly></textarea></label>
           </div>
         </div>
-        <div class="meta">Select a row to inspect details. Use the table checkboxes to choose one or more rows for update.</div>
-      </div>
-      <div id="flash" class="flash"></div>
+      </section>
     </section>
 
-    <section class="panel">
-      <h2 class="title">Results</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="select-cell"><input id="select_all_rows" type="checkbox" title="Select all rows" /></th>
-              <th>scix_id</th>
-              <th>Bibcode</th>
-              <th>Title</th>
-              <th id="score_col_header" style="cursor:pointer;" title="Sort by score">Score</th>
-              <th>run_id</th>
-              <th>validated</th>
-              <th>collection</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-    </section>
+    <section id="panel_pre_ingest_validator" class="tab-panel">
+      <section class="panel">
+        <h2 class="title">Pre-ingest Validator</h2>
+        <div class="validator-grid">
+          <div class="query-inputs">
+            <div class="row">
+              <label style="min-width:320px;">
+                Upload classified TSV
+                <input id="validator_file" type="file" accept=".tsv,.txt" />
+              </label>
+              <button id="validator_load_btn" type="button">Load File</button>
+              <button id="validator_export_btn" class="secondary" type="button">Export Updated TSV</button>
+            </div>
+            <div class="validator-actions">
+              <div id="validator_file_status" class="inline-meta">No validator file loaded.</div>
+              <span id="validator_dirty_pill" class="pill hidden">Unsaved override edits</span>
+            </div>
+          </div>
+          <div class="meta">Upload a classified TSV, inspect rows, and edit the <code>override</code> field. Edits stay in the browser until you export the updated file.</div>
+        </div>
+        <div id="validator_flash" class="flash"></div>
+      </section>
 
-    <section class="panel">
-      <h2 class="title">Details and Update</h2>
-      <div class="detail-grid">
-        <div>
-          <div class="meta" id="collection_label">No row selected.</div>
-          <div class="row" style="margin-top:8px;margin-bottom:8px;">
-            <label style="flex-direction:row; align-items:center; gap:8px; min-width:0;">
-              <input id="validated" type="checkbox" checked />
-              Set validated=True when updating
-            </label>
+      <section class="panel">
+        <h2 class="title">Validator Results</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="select-cell"><input id="validator_select_all_rows" type="checkbox" title="Select all rows" /></th>
+                <th>scix_id</th>
+                <th>Bibcode</th>
+                <th>Title</th>
+                <th id="validator_astronomy_score_col_header" style="cursor:pointer;" title="Sort by astronomy score">Astronomy</th>
+                <th>Physics</th>
+                <th>General</th>
+                <th>run_id</th>
+                <th>collections</th>
+                <th>override</th>
+              </tr>
+            </thead>
+            <tbody id="validator_rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="title">Override Editor</h2>
+        <div class="detail-grid">
+          <div>
+            <div class="meta" id="validator_collection_label">No row selected.</div>
+            <div class="row" style="margin-top:8px;margin-bottom:8px;">
+              <span class="pill">Editing TSV <code>override</code> values only</span>
+            </div>
+            <div id="validator_category_checks" class="checks"></div>
+            <div class="row" style="margin-top:10px;">
+              <button id="validator_submit_btn">Apply Override</button>
+              <button id="validator_clear_btn" class="secondary">Clear Selection</button>
+            </div>
           </div>
-          <div id="category_checks" class="checks"></div>
-          <div class="row" style="margin-top:10px;">
-            <button id="submit_btn">Submit Selection</button>
-            <button id="clear_btn" class="secondary">Clear Selection</button>
+          <div>
+            <label>Scores<textarea id="validator_scores_text" readonly></textarea></label>
+            <label>Title<textarea id="validator_title_text" readonly></textarea></label>
           </div>
         </div>
-        <div>
-          <label>Scores<textarea id="scores_text" readonly></textarea></label>
-          <label>Abstract<textarea id="abstract_text" readonly></textarea></label>
-        </div>
-      </div>
+      </section>
     </section>
   </main>
 
@@ -150,12 +246,36 @@
     const LARGE_BATCH_CONFIRM_THRESHOLD = 100;
     const BIBCODE_LIST_PRESET = "By bibcode list";
     const SCIX_ID_LIST_PRESET = "By scix_id list";
+    const VALIDATOR_SCORE_COLUMN_BY_CATEGORY = {
+      astrophysics: "astrophysics_score",
+      heliophysics: "heliophysics_score",
+      planetary: "planetary_science_score",
+      earthscience: "earth_science_score",
+      "NASA-funded Biophysics": "biology_score",
+      physics: "physics_score",
+      general: "general_score",
+      "Text Garbage": "garbage_score",
+    };
+    const VALIDATOR_EXTRA_SCORE_COLUMNS = [
+      ["astronomy", "astronomy_score"],
+      ["other", "other_score"],
+    ];
+
     let rowsData = [];
     let selectedIdx = -1;
     let selectedRowKeys = new Set();
     let parsedIdentifiers = [];
     let parsedIdentifierType = null;
     let scoreSortDir = "desc";
+
+    let activeTab = "db_inspector";
+    let validatorRows = [];
+    let validatorSelectedIdx = -1;
+    let validatorSelectedRowKeys = new Set();
+    let validatorAstronomySortDir = "desc";
+    let validatorParsedFileName = "";
+    let validatorDirty = false;
+    let validatorHeaders = [];
 
     const el = (id) => document.getElementById(id);
 
@@ -185,6 +305,28 @@
       const f = el("flash");
       f.textContent = "";
       f.className = "flash";
+    }
+
+    function showValidatorFlash(text, type = "") {
+      const f = el("validator_flash");
+      f.textContent = text;
+      f.className = `flash show ${type}`.trim();
+    }
+
+    function clearValidatorFlash() {
+      const f = el("validator_flash");
+      f.textContent = "";
+      f.className = "flash";
+    }
+
+    function setActiveTab(tabName) {
+      activeTab = tabName;
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === tabName);
+      });
+      document.querySelectorAll(".tab-panel").forEach((panel) => {
+        panel.classList.toggle("active", panel.id === `panel_${tabName}`);
+      });
     }
 
     function parseIdentifiers(rawText, splitOnNewlinesOnly = false) {
@@ -245,7 +387,7 @@
       el("collection_label").textContent = "No row selected.";
       el("scores_text").value = "";
       el("abstract_text").value = "";
-      clearChecks();
+      clearChecks("category_checks");
     }
 
     function selectedRowsForUpdate() {
@@ -325,8 +467,8 @@
       });
     }
 
-    function buildCategoryChecks() {
-      const box = el("category_checks");
+    function buildCategoryChecks(containerId) {
+      const box = el(containerId);
       box.innerHTML = "";
       allowedCategories.forEach((cat) => {
         const label = document.createElement("label");
@@ -344,12 +486,14 @@
       });
     }
 
-    function selectedCategories() {
-      return Array.from(document.querySelectorAll("#category_checks input[type=checkbox]:checked")).map((i) => i.value);
+    function selectedCategories(containerId) {
+      return Array.from(document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)).map((i) => i.value);
     }
 
-    function clearChecks() {
-      document.querySelectorAll("#category_checks input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+    function clearChecks(containerId) {
+      document.querySelectorAll(`#${containerId} input[type=checkbox]`).forEach((cb) => {
+        cb.checked = false;
+      });
     }
 
     async function api(path, method = "GET", payload = null) {
@@ -368,7 +512,9 @@
 
     function rowToTr(row, idx) {
       const tr = document.createElement("tr");
-      if (idx === selectedIdx) { tr.classList.add("selected"); }
+      if (idx === selectedIdx) {
+        tr.classList.add("selected");
+      }
       const checked = selectedRowKeys.has(row.row_key) ? "checked" : "";
       tr.innerHTML = `
         <td class="select-cell"><input type="checkbox" data-row-key="${row.row_key}" ${checked} /></td>
@@ -467,28 +613,377 @@
         el("scores_text").value = detail.scores_text;
         el("abstract_text").value = detail.abstract_text;
 
-        const infoByName = Object.fromEntries(detail.categories.map((c) => [c.name, c]));
-        const labelNodes = Array.from(document.querySelectorAll("#category_checks label"));
-        labelNodes.forEach((label) => {
-          const cb = label.querySelector("input");
-          const name = cb.dataset.category;
-          const info = infoByName[name];
-          const line1 = label.querySelector("span:nth-of-type(1)");
-          const line2 = label.querySelector("span:nth-of-type(2)");
-          cb.checked = !!info?.checked;
-
-          let tags = "";
-          if (info && info.tags && info.tags.length) {
-            tags = ` [${info.tags.join(" / ")}]`;
-          }
-          line1.textContent = `${name}${tags}`;
-          line2.textContent = info ? info.score : "0.00";
-        });
+        populateChecks("category_checks", detail.categories);
       } catch (err) {
         el("abstract_text").value = `(Failed to load details: ${err.message})`;
         showFlash(err.message, "err");
       }
     }
+
+    function populateChecks(containerId, categories) {
+      const infoByName = Object.fromEntries(categories.map((c) => [c.name, c]));
+      const labelNodes = Array.from(document.querySelectorAll(`#${containerId} label`));
+      labelNodes.forEach((label) => {
+        const cb = label.querySelector("input");
+        const name = cb.dataset.category;
+        const info = infoByName[name];
+        const line1 = label.querySelector("span:nth-of-type(1)");
+        const line2 = label.querySelector("span:nth-of-type(2)");
+        cb.checked = !!info?.checked;
+
+        let tags = "";
+        if (info && info.tags && info.tags.length) {
+          tags = ` [${info.tags.join(" / ")}]`;
+        }
+        line1.textContent = `${name}${tags}`;
+        line2.textContent = info ? info.score : "0.00";
+      });
+    }
+
+    function validatorScoreMap(rawRow) {
+      const scores = {};
+      allowedCategories.forEach((category) => {
+        const column = VALIDATOR_SCORE_COLUMN_BY_CATEGORY[category];
+        scores[category] = toNumericString(rawRow[column] || "0");
+      });
+      VALIDATOR_EXTRA_SCORE_COLUMNS.forEach(([label, column]) => {
+        scores[label] = toNumericString(rawRow[column] || "0");
+      });
+      return scores;
+    }
+
+    function splitCategoryList(rawValue) {
+      return String(rawValue || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function toNumericString(rawValue) {
+      const n = Number.parseFloat(String(rawValue || "").trim());
+      return Number.isFinite(n) ? n.toFixed(2) : "0.00";
+    }
+
+    function formatScoreMap(scoresMap) {
+      const entries = Object.entries(scoresMap);
+      const nonZeroEntries = entries.filter(([, value]) => Number.parseFloat(value) > 0);
+      const ordered = (nonZeroEntries.length ? nonZeroEntries : entries)
+        .sort((a, b) => Number.parseFloat(b[1]) - Number.parseFloat(a[1]));
+      return ordered.map(([name, value]) => `${name}: ${value}`).join("\n");
+    }
+
+    function buildValidatorRow(rawRow, idx) {
+      const scoresMap = validatorScoreMap(rawRow);
+      return {
+        row_key: `validator:${idx}`,
+        row_idx: idx,
+        raw: rawRow,
+        bibcode: String(rawRow.bibcode || "").trim(),
+        scix_id: String(rawRow.scix_id || "").trim(),
+        run_id: String(rawRow.run_id || "").trim(),
+        title: String(rawRow.title || "").trim(),
+        collections: splitCategoryList(rawRow.collections),
+        override: splitCategoryList(rawRow.override),
+        scoresMap,
+        astronomy_score: scoresMap.astronomy || "0.00",
+        physics_score: scoresMap.physics || "0.00",
+        general_score: scoresMap.general || "0.00",
+      };
+    }
+
+    function parseDelimitedLine(line, delimiter) {
+      const out = [];
+      let current = "";
+      let inQuotes = false;
+      for (let idx = 0; idx < line.length; idx += 1) {
+        const ch = line[idx];
+        if (ch === '"') {
+          if (inQuotes && line[idx + 1] === '"') {
+            current += '"';
+            idx += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === delimiter && !inQuotes) {
+          out.push(current);
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      out.push(current);
+      return out;
+    }
+
+    function parseTsv(text) {
+      const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+      if (!lines.length) {
+        throw new Error("The uploaded file is empty.");
+      }
+      const headers = parseDelimitedLine(lines[0], "\t").map((header) => header.trim());
+      const requiredHeaders = ["title", "collections", "override"];
+      const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
+      if (missingHeaders.length) {
+        throw new Error(`Missing required TSV columns: ${missingHeaders.join(", ")}`);
+      }
+
+      const rawRows = lines.slice(1).map((line, idx) => {
+        const cells = parseDelimitedLine(line, "\t");
+        const row = {};
+        headers.forEach((header, headerIdx) => {
+          row[header] = cells[headerIdx] ?? "";
+        });
+        row.__line_index = idx;
+        return row;
+      });
+
+      return { headers, rawRows };
+    }
+
+    function syncValidatorDirtyPill() {
+      el("validator_dirty_pill").classList.toggle("hidden", !validatorDirty);
+    }
+
+    function syncValidatorSelectedIndex(selectedRowKey) {
+      if (!selectedRowKey) {
+        return;
+      }
+      const nextIdx = validatorRows.findIndex((row) => row.row_key === selectedRowKey);
+      validatorSelectedIdx = nextIdx;
+    }
+
+    function clearValidatorSelectionState() {
+      validatorSelectedIdx = -1;
+      validatorSelectedRowKeys = new Set();
+      el("validator_select_all_rows").checked = false;
+      el("validator_collection_label").textContent = "No row selected.";
+      el("validator_scores_text").value = "";
+      el("validator_title_text").value = "";
+      clearChecks("validator_category_checks");
+    }
+
+    function selectedValidatorRowsForUpdate() {
+      const checkedRows = validatorRows.filter((row) => validatorSelectedRowKeys.has(row.row_key));
+      if (checkedRows.length) {
+        return checkedRows;
+      }
+      if (validatorSelectedIdx >= 0 && validatorSelectedIdx < validatorRows.length) {
+        return [validatorRows[validatorSelectedIdx]];
+      }
+      return [];
+    }
+
+    function validatorRowToTr(row, idx) {
+      const tr = document.createElement("tr");
+      if (idx === validatorSelectedIdx) {
+        tr.classList.add("selected");
+      }
+      const checked = validatorSelectedRowKeys.has(row.row_key) ? "checked" : "";
+      tr.innerHTML = `
+        <td class="select-cell"><input type="checkbox" data-row-key="${row.row_key}" ${checked} /></td>
+        <td>${row.scix_id || ""}</td>
+        <td>${row.bibcode || ""}</td>
+        <td>${row.title || ""}</td>
+        <td>${row.astronomy_score || ""}</td>
+        <td>${row.physics_score || ""}</td>
+        <td>${row.general_score || ""}</td>
+        <td>${row.run_id || ""}</td>
+        <td>${row.collections.join(", ")}</td>
+        <td>${row.override.join(", ")}</td>
+      `;
+      const cb = tr.querySelector('input[type="checkbox"]');
+      cb.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          validatorSelectedRowKeys.add(row.row_key);
+        } else {
+          validatorSelectedRowKeys.delete(row.row_key);
+        }
+        syncValidatorSelectAllState();
+        refreshValidatorSelectionDetail();
+      });
+      tr.addEventListener("click", () => selectValidatorRow(idx));
+      return tr;
+    }
+
+    function renderValidatorRows() {
+      const body = el("validator_rows");
+      body.innerHTML = "";
+      validatorRows.forEach((row, idx) => body.appendChild(validatorRowToTr(row, idx)));
+      syncValidatorSelectAllState();
+    }
+
+    function syncValidatorSelectAllState() {
+      const allChecked = validatorRows.length > 0 && validatorRows.every((row) => validatorSelectedRowKeys.has(row.row_key));
+      el("validator_select_all_rows").checked = allChecked;
+    }
+
+    function sortValidatorRowsByAstronomyScore() {
+      const factor = validatorAstronomySortDir === "asc" ? 1 : -1;
+      validatorRows.sort((a, b) => (scoreToNumber(a.astronomy_score) - scoreToNumber(b.astronomy_score)) * factor);
+      const header = el("validator_astronomy_score_col_header");
+      header.textContent = `Astronomy ${validatorAstronomySortDir === "asc" ? "▲" : "▼"}`;
+    }
+
+    function refreshValidatorSelectionDetail() {
+      if (validatorSelectedIdx < 0 || validatorSelectedIdx >= validatorRows.length) {
+        el("validator_collection_label").textContent = "No row selected.";
+        el("validator_scores_text").value = "";
+        el("validator_title_text").value = "";
+        clearChecks("validator_category_checks");
+        return;
+      }
+
+      const row = validatorRows[validatorSelectedIdx];
+      const selectedCount = validatorSelectedRowKeys.size;
+      const suffix = selectedCount ? `    Rows selected for update: ${selectedCount}` : "";
+      el("validator_collection_label").textContent = `Current collections: ${row.collections.join(", ") || "(none)"}    Current override: ${row.override.join(", ") || "(none)"}${suffix}`;
+      el("validator_scores_text").value = formatScoreMap(row.scoresMap);
+      el("validator_title_text").value = row.title || "(No title)";
+
+      const collectionSet = new Set(row.collections);
+      const overrideSet = new Set(row.override);
+      const categories = allowedCategories.map((category) => ({
+        name: category,
+        score: row.scoresMap[category] || "0.00",
+        checked: overrideSet.has(category),
+        tags: [
+          ...(collectionSet.has(category) ? ["C"] : []),
+          ...(overrideSet.has(category) ? ["O"] : []),
+        ],
+      }));
+      populateChecks("validator_category_checks", categories);
+    }
+
+    function selectValidatorRow(idx) {
+      validatorSelectedIdx = idx;
+      renderValidatorRows();
+      clearValidatorFlash();
+      refreshValidatorSelectionDetail();
+    }
+
+    function applyValidatorOverrideUpdate() {
+      const selectedRows = selectedValidatorRowsForUpdate();
+      if (!selectedRows.length) {
+        showValidatorFlash("Select a row first.", "err");
+        return;
+      }
+      if (selectedRows.length >= LARGE_BATCH_CONFIRM_THRESHOLD) {
+        const confirmed = window.confirm(`You are about to update ${selectedRows.length} validator rows at once. Continue?`);
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      const categories = selectedCategories("validator_category_checks");
+      const categoryString = categories.join(", ");
+      const selectedKeys = new Set(selectedRows.map((row) => row.row_key));
+      const selectedRowKey = validatorRows[validatorSelectedIdx]?.row_key;
+
+      validatorRows = validatorRows.map((row) => {
+        if (!selectedKeys.has(row.row_key)) {
+          return row;
+        }
+        const nextRaw = { ...row.raw, override: categoryString };
+        return buildValidatorRow(nextRaw, row.row_idx);
+      });
+
+      validatorDirty = true;
+      validatorSelectedRowKeys = new Set();
+      sortValidatorRowsByAstronomyScore();
+      syncValidatorSelectedIndex(selectedRowKey);
+      renderValidatorRows();
+      if (validatorSelectedIdx >= 0 && validatorSelectedIdx < validatorRows.length) {
+        refreshValidatorSelectionDetail();
+      }
+      syncValidatorDirtyPill();
+      showValidatorFlash(`Updated override for ${selectedRows.length} row${selectedRows.length === 1 ? "" : "s"}.`, "ok");
+    }
+
+    function loadValidatorFile() {
+      const file = el("validator_file").files[0];
+      if (!file) {
+        showValidatorFlash("Choose a TSV file first.", "err");
+        return;
+      }
+      clearValidatorFlash();
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = parseTsv(String(reader.result || ""));
+          validatorHeaders = parsed.headers;
+          validatorRows = parsed.rawRows.map((rawRow, idx) => buildValidatorRow(rawRow, idx));
+          validatorParsedFileName = file.name;
+          validatorDirty = false;
+          validatorSelectedIdx = -1;
+          validatorSelectedRowKeys = new Set();
+          sortValidatorRowsByAstronomyScore();
+          renderValidatorRows();
+          refreshValidatorSelectionDetail();
+          syncValidatorDirtyPill();
+          el("validator_file_status").textContent = `Loaded ${validatorRows.length} rows from ${validatorParsedFileName}.`;
+          showValidatorFlash(`Loaded ${validatorRows.length} validator rows.`, "ok");
+        } catch (err) {
+          validatorRows = [];
+          validatorHeaders = [];
+          validatorParsedFileName = "";
+          clearValidatorSelectionState();
+          renderValidatorRows();
+          showValidatorFlash(err.message, "err");
+        }
+      };
+      reader.onerror = () => {
+        showValidatorFlash("Failed to read validator file.", "err");
+      };
+      reader.readAsText(file);
+    }
+
+    function escapeTsvCell(value) {
+      const text = String(value ?? "");
+      if (text.includes("\t") || text.includes("\n") || text.includes('"')) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    }
+
+    function exportValidatorTsv() {
+      if (!validatorRows.length || !validatorHeaders.length) {
+        showValidatorFlash("Load a validator TSV first.", "err");
+        return;
+      }
+      const lines = [
+        validatorHeaders.join("\t"),
+        ...validatorRows.map((row) =>
+          validatorHeaders.map((header) => {
+            if (header === "override") {
+              return escapeTsvCell(row.override.join(", "));
+            }
+            return escapeTsvCell(row.raw[header] ?? "");
+          }).join("\t")
+        ),
+      ];
+      const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/tab-separated-values;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const baseName = validatorParsedFileName || "validated_pre_ingest.tsv";
+      link.href = url;
+      link.download = baseName.endsWith(".tsv") ? baseName.replace(/\.tsv$/i, "_updated.tsv") : `${baseName}_updated.tsv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      validatorDirty = false;
+      syncValidatorDirtyPill();
+      showValidatorFlash("Exported updated TSV.", "ok");
+    }
+
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setActiveTab(btn.dataset.tab);
+      });
+    });
 
     el("score_col_header").addEventListener("click", () => {
       if (!rowsData.length) {
@@ -500,8 +995,17 @@
       el("collection_label").textContent = "No row selected.";
       el("scores_text").value = "";
       el("abstract_text").value = "";
-      clearChecks();
+      clearChecks("category_checks");
       renderRows();
+    });
+
+    el("validator_astronomy_score_col_header").addEventListener("click", () => {
+      if (!validatorRows.length) {
+        return;
+      }
+      validatorAstronomySortDir = validatorAstronomySortDir === "asc" ? "desc" : "asc";
+      sortValidatorRowsByAstronomyScore();
+      renderValidatorRows();
     });
 
     el("connect_btn").addEventListener("click", async () => {
@@ -566,7 +1070,7 @@
 
       try {
         const updatedRowKeys = new Set(selectedRows.map((row) => row.row_key));
-        const categories = selectedCategories();
+        const categories = selectedCategories("category_checks");
         const validated = !!el("validated").checked;
         const data = await api("/api/update", "POST", {
           ...dbPayload(),
@@ -593,7 +1097,7 @@
     });
 
     el("clear_btn").addEventListener("click", () => {
-      clearChecks();
+      clearChecks("category_checks");
     });
 
     el("select_all_rows").addEventListener("change", (event) => {
@@ -625,9 +1129,37 @@
       }
     });
 
+    el("validator_load_btn").addEventListener("click", () => {
+      loadValidatorFile();
+    });
+
+    el("validator_export_btn").addEventListener("click", () => {
+      exportValidatorTsv();
+    });
+
+    el("validator_submit_btn").addEventListener("click", () => {
+      applyValidatorOverrideUpdate();
+    });
+
+    el("validator_clear_btn").addEventListener("click", () => {
+      clearChecks("validator_category_checks");
+    });
+
+    el("validator_select_all_rows").addEventListener("change", (event) => {
+      if (event.target.checked) {
+        validatorSelectedRowKeys = new Set(validatorRows.map((row) => row.row_key));
+      } else {
+        validatorSelectedRowKeys = new Set();
+      }
+      renderValidatorRows();
+      refreshValidatorSelectionDetail();
+    });
+
     initSelects();
-    buildCategoryChecks();
+    buildCategoryChecks("category_checks");
+    buildCategoryChecks("validator_category_checks");
     syncIdentifierState();
+    syncValidatorDirtyPill();
   </script>
 </body>
 </html>
