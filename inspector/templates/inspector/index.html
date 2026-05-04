@@ -205,8 +205,8 @@
                 <th>Bibcode</th>
                 <th>Title</th>
                 <th id="validator_astronomy_score_col_header" style="cursor:pointer;" title="Sort by astronomy score">Astronomy</th>
-                <th>Physics</th>
-                <th>General</th>
+                <th id="validator_physics_score_col_header" style="cursor:pointer;" title="Sort by physics score">Physics</th>
+                <th id="validator_general_score_col_header" style="cursor:pointer;" title="Sort by general score">General</th>
                 <th>run_id</th>
                 <th>collections</th>
                 <th>override</th>
@@ -260,6 +260,16 @@
       ["astronomy", "astronomy_score"],
       ["other", "other_score"],
     ];
+    const VALIDATOR_DETAIL_SCORE_ORDER = [
+      "astrophysics",
+      "NASA-funded Biophysics",
+      "planetary",
+      "physics",
+      "general",
+      "heliophysics",
+      "earthscience",
+      "Text Garbage",
+    ];
 
     let rowsData = [];
     let selectedIdx = -1;
@@ -272,7 +282,8 @@
     let validatorRows = [];
     let validatorSelectedIdx = -1;
     let validatorSelectedRowKeys = new Set();
-    let validatorAstronomySortDir = "desc";
+    let validatorScoreSortKey = "astronomy_score";
+    let validatorScoreSortDir = "desc";
     let validatorParsedFileName = "";
     let validatorDirty = false;
     let validatorHeaders = [];
@@ -665,11 +676,9 @@
     }
 
     function formatScoreMap(scoresMap) {
-      const entries = Object.entries(scoresMap);
-      const nonZeroEntries = entries.filter(([, value]) => Number.parseFloat(value) > 0);
-      const ordered = (nonZeroEntries.length ? nonZeroEntries : entries)
-        .sort((a, b) => Number.parseFloat(b[1]) - Number.parseFloat(a[1]));
-      return ordered.map(([name, value]) => `${name}: ${value}`).join("\n");
+      return VALIDATOR_DETAIL_SCORE_ORDER
+        .map((name) => `${name}: ${scoresMap[name] || "0.00"}`)
+        .join("\n");
     }
 
     function buildValidatorRow(rawRow, idx) {
@@ -820,11 +829,23 @@
       el("validator_select_all_rows").checked = allChecked;
     }
 
-    function sortValidatorRowsByAstronomyScore() {
-      const factor = validatorAstronomySortDir === "asc" ? 1 : -1;
-      validatorRows.sort((a, b) => (scoreToNumber(a.astronomy_score) - scoreToNumber(b.astronomy_score)) * factor);
-      const header = el("validator_astronomy_score_col_header");
-      header.textContent = `Astronomy ${validatorAstronomySortDir === "asc" ? "▲" : "▼"}`;
+    function syncValidatorScoreHeaders() {
+      const headers = [
+        ["validator_astronomy_score_col_header", "Astronomy", "astronomy_score"],
+        ["validator_physics_score_col_header", "Physics", "physics_score"],
+        ["validator_general_score_col_header", "General", "general_score"],
+      ];
+      headers.forEach(([id, label, key]) => {
+        el(id).textContent = key === validatorScoreSortKey
+          ? `${label} ${validatorScoreSortDir === "asc" ? "▲" : "▼"}`
+          : label;
+      });
+    }
+
+    function sortValidatorRowsByScoreColumn() {
+      const factor = validatorScoreSortDir === "asc" ? 1 : -1;
+      validatorRows.sort((a, b) => (scoreToNumber(a[validatorScoreSortKey]) - scoreToNumber(b[validatorScoreSortKey])) * factor);
+      syncValidatorScoreHeaders();
     }
 
     function refreshValidatorSelectionDetail() {
@@ -892,7 +913,7 @@
 
       validatorDirty = true;
       validatorSelectedRowKeys = new Set();
-      sortValidatorRowsByAstronomyScore();
+      sortValidatorRowsByScoreColumn();
       syncValidatorSelectedIndex(selectedRowKey);
       renderValidatorRows();
       if (validatorSelectedIdx >= 0 && validatorSelectedIdx < validatorRows.length) {
@@ -919,7 +940,7 @@
           validatorDirty = false;
           validatorSelectedIdx = -1;
           validatorSelectedRowKeys = new Set();
-          sortValidatorRowsByAstronomyScore();
+          sortValidatorRowsByScoreColumn();
           renderValidatorRows();
           refreshValidatorSelectionDetail();
           syncValidatorDirtyPill();
@@ -999,13 +1020,30 @@
       renderRows();
     });
 
-    el("validator_astronomy_score_col_header").addEventListener("click", () => {
+    function toggleValidatorScoreSort(sortKey) {
       if (!validatorRows.length) {
         return;
       }
-      validatorAstronomySortDir = validatorAstronomySortDir === "asc" ? "desc" : "asc";
-      sortValidatorRowsByAstronomyScore();
+      if (validatorScoreSortKey === sortKey) {
+        validatorScoreSortDir = validatorScoreSortDir === "asc" ? "desc" : "asc";
+      } else {
+        validatorScoreSortKey = sortKey;
+        validatorScoreSortDir = "desc";
+      }
+      sortValidatorRowsByScoreColumn();
       renderValidatorRows();
+    }
+
+    el("validator_astronomy_score_col_header").addEventListener("click", () => {
+      toggleValidatorScoreSort("astronomy_score");
+    });
+
+    el("validator_physics_score_col_header").addEventListener("click", () => {
+      toggleValidatorScoreSort("physics_score");
+    });
+
+    el("validator_general_score_col_header").addEventListener("click", () => {
+      toggleValidatorScoreSort("general_score");
     });
 
     el("connect_btn").addEventListener("click", async () => {

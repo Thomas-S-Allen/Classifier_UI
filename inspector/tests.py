@@ -10,6 +10,7 @@ class _FakeCursor:
     def __init__(self, rows):
         self.rows = rows
         self.executed = []
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -19,6 +20,10 @@ class _FakeCursor:
 
     def execute(self, sql, params):
         self.executed.append((sql, params))
+        if sql.lstrip().upper().startswith("UPDATE"):
+            self.rowcount = 0
+        elif sql.lstrip().upper().startswith("INSERT"):
+            self.rowcount = 1
 
     def fetchall(self):
         return self.rows
@@ -33,6 +38,29 @@ class _FakeConnection:
 
 
 class DatabaseClientRunQueryTests(SimpleTestCase):
+    def test_base_select_prefers_score_id_then_bibcode_then_scix_id_for_final_collection(self):
+        client = DatabaseClient()
+        client.metadata_table = None
+
+        sql = client._base_select()
+
+        self.assertIn("OR (bibcode IS NOT NULL AND bibcode = s.bibcode)", sql)
+        self.assertIn("OR (scix_id IS NOT NULL AND scix_id = s.scix_id)", sql)
+        self.assertIn("WHEN score_id = s.id THEN 0", sql)
+        self.assertIn("WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1", sql)
+        self.assertIn("WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 2", sql)
+
+    def test_base_select_prefers_scix_id_then_bibcode_for_overrides(self):
+        client = DatabaseClient()
+        client.metadata_table = None
+
+        sql = client._base_select()
+
+        self.assertIn("WHERE (scix_id IS NOT NULL AND scix_id = s.scix_id)", sql)
+        self.assertIn("OR (bibcode IS NOT NULL AND bibcode = s.bibcode)", sql)
+        self.assertIn("WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 0", sql)
+        self.assertIn("WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1", sql)
+
     def test_bibcode_list_query_uses_text_casts_for_filter_and_order(self):
         client = DatabaseClient()
         client.conn = _FakeConnection(rows=[])
@@ -72,6 +100,26 @@ class DatabaseClientRunQueryTests(SimpleTestCase):
         self.assertIn("s.scix_id::text = ANY(%s::text[])", sql)
         self.assertIn("array_position(%s::text[], s.scix_id::text)", sql)
         self.assertEqual(params[-1], ["scix:abc", "scix:def"])
+
+    def test_update_collection_insert_includes_scix_id_for_final_collection(self):
+        client = DatabaseClient()
+        client.conn = _FakeConnection(rows=[])
+
+        client.update_collection(
+            final_collection_id=None,
+            score_id=18,
+            bibcode=None,
+            scix_id="scix:abc",
+            collection=["astrophysics"],
+            validated=False,
+            commit=False,
+        )
+
+        sql_statements = client.conn.cursor_instance.executed
+        final_collection_insert = next(
+            params for sql, params in sql_statements if "INSERT INTO final_collection" in sql
+        )
+        self.assertEqual(final_collection_insert, (None, "scix:abc", 18, ["astrophysics"], False))
 
 
 class ApiQueryTests(SimpleTestCase):

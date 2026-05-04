@@ -136,17 +136,30 @@ class DatabaseClient:
                 SELECT id, collection, validated
                 FROM final_collection
                 WHERE score_id = s.id
-                    OR (score_id IS NULL AND bibcode = s.bibcode)
+                    OR (bibcode IS NOT NULL AND bibcode = s.bibcode)
+                    OR (scix_id IS NOT NULL AND scix_id = s.scix_id)
                 ORDER BY
-                    CASE WHEN score_id = s.id THEN 0 ELSE 1 END,
+                    CASE
+                        WHEN score_id = s.id THEN 0
+                        WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1
+                        WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 2
+                        ELSE 3
+                    END,
                     created DESC
                 LIMIT 1
             ) fc ON TRUE
             LEFT JOIN LATERAL (
                 SELECT override
                 FROM overrides
-                WHERE bibcode = s.bibcode
-                ORDER BY created DESC
+                WHERE (scix_id IS NOT NULL AND scix_id = s.scix_id)
+                    OR (bibcode IS NOT NULL AND bibcode = s.bibcode)
+                ORDER BY
+                    CASE
+                        WHEN scix_id IS NOT NULL AND scix_id = s.scix_id THEN 0
+                        WHEN bibcode IS NOT NULL AND bibcode = s.bibcode THEN 1
+                        ELSE 2
+                    END,
+                    created DESC
                 LIMIT 1
             ) ov ON TRUE
             {metadata_join}
@@ -259,10 +272,10 @@ class DatabaseClient:
             if updated == 0:
                 cur.execute(
                     """
-                    INSERT INTO final_collection (bibcode, score_id, collection, validated)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO final_collection (bibcode, scix_id, score_id, collection, validated)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (bibcode, score_id, collection, validated),
+                    (bibcode, scix_id, score_id, collection, validated),
                 )
 
             override_updated = 0
