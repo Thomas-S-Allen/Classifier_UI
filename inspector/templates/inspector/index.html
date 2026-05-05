@@ -1087,6 +1087,26 @@
       URL.revokeObjectURL(url);
     }
 
+    async function saveTsvWithPicker(lines, fileName) {
+      if (typeof window.showSaveFilePicker !== "function") {
+        return false;
+      }
+      const handle = await window.showSaveFilePicker({
+        id: "pre-ingest-curated-tsv",
+        suggestedName: fileName,
+        types: [
+          {
+            description: "Tab-separated values",
+            accept: { "text/tab-separated-values": [".tsv"] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(`${lines.join("\n")}\n`);
+      await writable.close();
+      return true;
+    }
+
     function exportValidatorTsv() {
       if (!validatorRows.length || !validatorHeaders.length) {
         showValidatorFlash("Load a validator TSV first.", "err");
@@ -1111,7 +1131,7 @@
       showValidatorFlash("Saved updated TSV.", "ok");
     }
 
-    function exportCuratedValidatorTsv() {
+    async function exportCuratedValidatorTsv() {
       if (!validatorAllRows.length) {
         showValidatorFlash("Load a validator TSV first.", "err");
         return;
@@ -1130,8 +1150,21 @@
       ];
       const requestedName = String(el("validator_curated_filename").value || "").trim();
       const fileName = requestedName || curatedFileNameFor(validatorParsedFileName);
-      triggerTsvDownload(lines, fileName);
-      showValidatorFlash("Exported curated TSV.", "ok");
+      try {
+        const savedWithPicker = await saveTsvWithPicker(lines, fileName);
+        if (!savedWithPicker) {
+          triggerTsvDownload(lines, fileName);
+          showValidatorFlash("Exported curated TSV.", "ok");
+          return;
+        }
+        showValidatorFlash("Saved curated TSV.", "ok");
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          return;
+        }
+        triggerTsvDownload(lines, fileName);
+        showValidatorFlash(`Save dialog unavailable, exported curated TSV instead. ${err.message || ""}`.trim(), "ok");
+      }
     }
 
     document.querySelectorAll(".tab-btn").forEach((btn) => {
