@@ -101,6 +101,8 @@
               <label>Score category
                 <select id="score_category"></select>
               </label>
+              <label>Score min<input id="score_min" type="number" step="0.01" /></label>
+              <label>Score max<input id="score_max" type="number" step="0.01" /></label>
               <button id="run_query_btn">Run Query</button>
             </div>
             <div class="row">
@@ -181,8 +183,17 @@
                 Upload classified TSV
                 <input id="validator_file" type="file" accept=".tsv,.txt" />
               </label>
+              <label>Score min<input id="validator_score_min" type="number" step="0.01" /></label>
+              <label>Score max<input id="validator_score_max" type="number" step="0.01" /></label>
               <button id="validator_load_btn" type="button">Load File</button>
-              <button id="validator_export_btn" class="secondary" type="button">Export Updated TSV</button>
+              <button id="validator_export_btn" class="secondary" type="button">Save Updated TSV</button>
+              <button id="validator_curated_export_btn" class="secondary" type="button">Export Curated TSV</button>
+            </div>
+            <div class="row">
+              <label style="min-width:320px;">
+                Curated output filename
+                <input id="validator_curated_filename" value="validated_pre_ingest_curated.tsv" />
+              </label>
             </div>
             <div class="validator-actions">
               <div id="validator_file_status" class="inline-meta">No validator file loaded.</div>
@@ -270,7 +281,16 @@
       "earthscience",
       "Text Garbage",
     ];
+    const VALIDATOR_GROSS_CATEGORIES = [
+      { value: "astronomy", label: "Astronomy" },
+      { value: "physics", label: "Physics" },
+      { value: "general", label: "General" },
+    ];
+    const VALIDATOR_GROSS_CATEGORY_LABELS = Object.fromEntries(
+      VALIDATOR_GROSS_CATEGORIES.map((category) => [category.value, category.label])
+    );
 
+    let allRowsData = [];
     let rowsData = [];
     let selectedIdx = -1;
     let selectedRowKeys = new Set();
@@ -279,6 +299,7 @@
     let scoreSortDir = "desc";
 
     let activeTab = "db_inspector";
+    let validatorAllRows = [];
     let validatorRows = [];
     let validatorSelectedIdx = -1;
     let validatorSelectedRowKeys = new Set();
@@ -401,6 +422,57 @@
       clearChecks("category_checks");
     }
 
+    function parseOptionalBound(rawValue) {
+      const text = String(rawValue ?? "").trim();
+      if (!text) {
+        return null;
+      }
+      const value = Number.parseFloat(text);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function scoreWithinBounds(rawScore, minValue, maxValue) {
+      const numericScore = Number.parseFloat(rawScore);
+      if (!Number.isFinite(numericScore)) {
+        return minValue === null && maxValue === null;
+      }
+      if (minValue !== null && numericScore < minValue) {
+        return false;
+      }
+      if (maxValue !== null && numericScore > maxValue) {
+        return false;
+      }
+      return true;
+    }
+
+    function syncSelectedIndexByKey(rows, selectedRowKey) {
+      if (!selectedRowKey) {
+        return -1;
+      }
+      return rows.findIndex((row) => row.row_key === selectedRowKey);
+    }
+
+    function resetDbDetailPane() {
+      el("collection_label").textContent = "No row selected.";
+      el("scores_text").value = "";
+      el("abstract_text").value = "";
+      clearChecks("category_checks");
+    }
+
+    function applyDbScoreFilter() {
+      const selectedRowKey = rowsData[selectedIdx]?.row_key;
+      const minValue = parseOptionalBound(el("score_min").value);
+      const maxValue = parseOptionalBound(el("score_max").value);
+      rowsData = allRowsData.filter((row) => scoreWithinBounds(row.score, minValue, maxValue));
+      selectedRowKeys = new Set([...selectedRowKeys].filter((rowKey) => rowsData.some((row) => row.row_key === rowKey)));
+      selectedIdx = syncSelectedIndexByKey(rowsData, selectedRowKey);
+      if (selectedIdx < 0) {
+        resetDbDetailPane();
+      }
+      sortRowsByScore();
+      renderRows();
+    }
+
     function selectedRowsForUpdate() {
       const checkedRows = rowsData.filter((row) => selectedRowKeys.has(row.row_key));
       if (checkedRows.length) {
@@ -432,13 +504,8 @@
         ads_token: el("ads_token").value,
       });
 
-      rowsData = data.rows || [];
-      if (preset !== BIBCODE_LIST_PRESET && preset !== SCIX_ID_LIST_PRESET) {
-        sortRowsByScore();
-      } else {
-        el("score_col_header").textContent = "Score";
-      }
-      renderRows();
+      allRowsData = data.rows || [];
+      applyDbScoreFilter();
       setStatus("Connected", "ok");
 
       let msg = `Loaded ${data.count} rows`;
@@ -478,17 +545,17 @@
       });
     }
 
-    function buildCategoryChecks(containerId) {
+    function buildCategoryChecks(containerId, categories = allowedCategories.map((category) => ({ value: category, label: category }))) {
       const box = el(containerId);
       box.innerHTML = "";
-      allowedCategories.forEach((cat) => {
+      categories.forEach((category) => {
         const label = document.createElement("label");
         const cb = document.createElement("input");
         cb.type = "checkbox";
-        cb.value = cat;
-        cb.dataset.category = cat;
+        cb.value = category.value;
+        cb.dataset.category = category.value;
         const t1 = document.createElement("span");
-        t1.textContent = cat;
+        t1.textContent = category.label;
         const t2 = document.createElement("span");
         t2.className = "meta";
         t2.textContent = "0.00";
@@ -567,7 +634,7 @@
 
     function patchUpdatedRows(updatedRowKeys, categories, validated) {
       const categoryCopy = [...categories];
-      rowsData = rowsData.map((row) => {
+      allRowsData = allRowsData.map((row) => {
         if (!updatedRowKeys.has(row.row_key)) {
           return row;
         }
@@ -586,6 +653,7 @@
           validated,
         };
       });
+      applyDbScoreFilter();
     }
 
     function scoreToNumber(v) {
@@ -646,7 +714,7 @@
         if (info && info.tags && info.tags.length) {
           tags = ` [${info.tags.join(" / ")}]`;
         }
-        line1.textContent = `${name}${tags}`;
+        line1.textContent = `${info?.label || name}${tags}`;
         line2.textContent = info ? info.score : "0.00";
       });
     }
@@ -670,6 +738,17 @@
         .filter(Boolean);
     }
 
+    function splitGrossCategoryList(rawValue) {
+      const allowedValues = new Set(VALIDATOR_GROSS_CATEGORIES.map((category) => category.value));
+      return splitCategoryList(rawValue)
+        .map((item) => item.toLowerCase())
+        .filter((item) => allowedValues.has(item));
+    }
+
+    function formatGrossCategoryList(categories) {
+      return categories.map((category) => VALIDATOR_GROSS_CATEGORY_LABELS[category] || category).join(", ");
+    }
+
     function toNumericString(rawValue) {
       const n = Number.parseFloat(String(rawValue || "").trim());
       return Number.isFinite(n) ? n.toFixed(2) : "0.00";
@@ -691,8 +770,8 @@
         scix_id: String(rawRow.scix_id || "").trim(),
         run_id: String(rawRow.run_id || "").trim(),
         title: String(rawRow.title || "").trim(),
-        collections: splitCategoryList(rawRow.collections),
-        override: splitCategoryList(rawRow.override),
+        collections: splitGrossCategoryList(rawRow.gross_collection || rawRow.collections),
+        override: splitGrossCategoryList(rawRow.override),
         scoresMap,
         astronomy_score: scoresMap.astronomy || "0.00",
         physics_score: scoresMap.physics || "0.00",
@@ -755,10 +834,9 @@
 
     function syncValidatorSelectedIndex(selectedRowKey) {
       if (!selectedRowKey) {
-        return;
+        return -1;
       }
-      const nextIdx = validatorRows.findIndex((row) => row.row_key === selectedRowKey);
-      validatorSelectedIdx = nextIdx;
+      return validatorRows.findIndex((row) => row.row_key === selectedRowKey);
     }
 
     function clearValidatorSelectionState() {
@@ -769,6 +847,25 @@
       el("validator_scores_text").value = "";
       el("validator_title_text").value = "";
       clearChecks("validator_category_checks");
+    }
+
+    function applyValidatorScoreFilter() {
+      const selectedRowKey = validatorRows[validatorSelectedIdx]?.row_key;
+      const minValue = parseOptionalBound(el("validator_score_min").value);
+      const maxValue = parseOptionalBound(el("validator_score_max").value);
+      validatorRows = validatorAllRows.filter((row) => scoreWithinBounds(row[validatorScoreSortKey], minValue, maxValue));
+      validatorSelectedRowKeys = new Set(
+        [...validatorSelectedRowKeys].filter((rowKey) => validatorRows.some((row) => row.row_key === rowKey))
+      );
+      validatorSelectedIdx = syncValidatorSelectedIndex(selectedRowKey);
+      if (validatorSelectedIdx < 0) {
+        el("validator_collection_label").textContent = "No row selected.";
+        el("validator_scores_text").value = "";
+        el("validator_title_text").value = "";
+        clearChecks("validator_category_checks");
+      }
+      sortValidatorRowsByScoreColumn();
+      renderValidatorRows();
     }
 
     function selectedValidatorRowsForUpdate() {
@@ -797,8 +894,8 @@
         <td>${row.physics_score || ""}</td>
         <td>${row.general_score || ""}</td>
         <td>${row.run_id || ""}</td>
-        <td>${row.collections.join(", ")}</td>
-        <td>${row.override.join(", ")}</td>
+        <td>${formatGrossCategoryList(row.collections)}</td>
+        <td>${formatGrossCategoryList(row.override)}</td>
       `;
       const cb = tr.querySelector('input[type="checkbox"]');
       cb.addEventListener("click", (event) => {
@@ -860,19 +957,20 @@
       const row = validatorRows[validatorSelectedIdx];
       const selectedCount = validatorSelectedRowKeys.size;
       const suffix = selectedCount ? `    Rows selected for update: ${selectedCount}` : "";
-      el("validator_collection_label").textContent = `Current collections: ${row.collections.join(", ") || "(none)"}    Current override: ${row.override.join(", ") || "(none)"}${suffix}`;
+      el("validator_collection_label").textContent = `Current gross collections: ${formatGrossCategoryList(row.collections) || "(none)"}    Current override: ${formatGrossCategoryList(row.override) || "(none)"}${suffix}`;
       el("validator_scores_text").value = formatScoreMap(row.scoresMap);
       el("validator_title_text").value = row.title || "(No title)";
 
       const collectionSet = new Set(row.collections);
       const overrideSet = new Set(row.override);
-      const categories = allowedCategories.map((category) => ({
-        name: category,
-        score: row.scoresMap[category] || "0.00",
-        checked: overrideSet.has(category),
+      const categories = VALIDATOR_GROSS_CATEGORIES.map((category) => ({
+        name: category.value,
+        label: category.label,
+        score: row[`${category.value}_score`] || "0.00",
+        checked: overrideSet.has(category.value),
         tags: [
-          ...(collectionSet.has(category) ? ["C"] : []),
-          ...(overrideSet.has(category) ? ["O"] : []),
+          ...(collectionSet.has(category.value) ? ["C"] : []),
+          ...(overrideSet.has(category.value) ? ["O"] : []),
         ],
       }));
       populateChecks("validator_category_checks", categories);
@@ -903,7 +1001,7 @@
       const selectedKeys = new Set(selectedRows.map((row) => row.row_key));
       const selectedRowKey = validatorRows[validatorSelectedIdx]?.row_key;
 
-      validatorRows = validatorRows.map((row) => {
+      validatorAllRows = validatorAllRows.map((row) => {
         if (!selectedKeys.has(row.row_key)) {
           return row;
         }
@@ -913,9 +1011,8 @@
 
       validatorDirty = true;
       validatorSelectedRowKeys = new Set();
-      sortValidatorRowsByScoreColumn();
-      syncValidatorSelectedIndex(selectedRowKey);
-      renderValidatorRows();
+      validatorSelectedIdx = syncValidatorSelectedIndex(selectedRowKey);
+      applyValidatorScoreFilter();
       if (validatorSelectedIdx >= 0 && validatorSelectedIdx < validatorRows.length) {
         refreshValidatorSelectionDetail();
       }
@@ -935,18 +1032,19 @@
         try {
           const parsed = parseTsv(String(reader.result || ""));
           validatorHeaders = parsed.headers;
-          validatorRows = parsed.rawRows.map((rawRow, idx) => buildValidatorRow(rawRow, idx));
+          validatorAllRows = parsed.rawRows.map((rawRow, idx) => buildValidatorRow(rawRow, idx));
           validatorParsedFileName = file.name;
+          el("validator_curated_filename").value = curatedFileNameFor(file.name);
           validatorDirty = false;
           validatorSelectedIdx = -1;
           validatorSelectedRowKeys = new Set();
-          sortValidatorRowsByScoreColumn();
-          renderValidatorRows();
+          applyValidatorScoreFilter();
           refreshValidatorSelectionDetail();
           syncValidatorDirtyPill();
-          el("validator_file_status").textContent = `Loaded ${validatorRows.length} rows from ${validatorParsedFileName}.`;
-          showValidatorFlash(`Loaded ${validatorRows.length} validator rows.`, "ok");
+          el("validator_file_status").textContent = `Loaded ${validatorAllRows.length} rows from ${validatorParsedFileName}. Showing ${validatorRows.length}.`;
+          showValidatorFlash(`Loaded ${validatorAllRows.length} validator rows. Showing ${validatorRows.length}.`, "ok");
         } catch (err) {
+          validatorAllRows = [];
           validatorRows = [];
           validatorHeaders = [];
           validatorParsedFileName = "";
@@ -969,6 +1067,26 @@
       return text;
     }
 
+    function curatedFileNameFor(baseName) {
+      const text = String(baseName || "").trim();
+      if (!text) {
+        return "validated_pre_ingest_curated.tsv";
+      }
+      return text.endsWith(".tsv") ? text.replace(/\.tsv$/i, "_curated.tsv") : `${text}_curated.tsv`;
+    }
+
+    function triggerTsvDownload(lines, fileName) {
+      const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/tab-separated-values;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
     function exportValidatorTsv() {
       if (!validatorRows.length || !validatorHeaders.length) {
         showValidatorFlash("Load a validator TSV first.", "err");
@@ -976,7 +1094,7 @@
       }
       const lines = [
         validatorHeaders.join("\t"),
-        ...validatorRows.map((row) =>
+        ...validatorAllRows.map((row) =>
           validatorHeaders.map((header) => {
             if (header === "override") {
               return escapeTsvCell(row.override.join(", "));
@@ -985,19 +1103,35 @@
           }).join("\t")
         ),
       ];
-      const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/tab-separated-values;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
       const baseName = validatorParsedFileName || "validated_pre_ingest.tsv";
-      link.href = url;
-      link.download = baseName.endsWith(".tsv") ? baseName.replace(/\.tsv$/i, "_updated.tsv") : `${baseName}_updated.tsv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      const fileName = baseName.endsWith(".tsv") ? baseName.replace(/\.tsv$/i, "_updated.tsv") : `${baseName}_updated.tsv`;
+      triggerTsvDownload(lines, fileName);
       validatorDirty = false;
       syncValidatorDirtyPill();
-      showValidatorFlash("Exported updated TSV.", "ok");
+      showValidatorFlash("Saved updated TSV.", "ok");
+    }
+
+    function exportCuratedValidatorTsv() {
+      if (!validatorAllRows.length) {
+        showValidatorFlash("Load a validator TSV first.", "err");
+        return;
+      }
+      const lines = [
+        ["scix_id", "bibcode", "title", "gross_collection"].join("\t"),
+        ...validatorAllRows.map((row) => {
+          const grossCollection = row.override.length ? row.override.join(", ") : String(row.raw.gross_collection || "").trim();
+          return [
+            escapeTsvCell(row.scix_id || ""),
+            escapeTsvCell(row.bibcode || ""),
+            escapeTsvCell(row.title || ""),
+            escapeTsvCell(grossCollection),
+          ].join("\t");
+        }),
+      ];
+      const requestedName = String(el("validator_curated_filename").value || "").trim();
+      const fileName = requestedName || curatedFileNameFor(validatorParsedFileName);
+      triggerTsvDownload(lines, fileName);
+      showValidatorFlash("Exported curated TSV.", "ok");
     }
 
     document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -1030,8 +1164,7 @@
         validatorScoreSortKey = sortKey;
         validatorScoreSortDir = "desc";
       }
-      sortValidatorRowsByScoreColumn();
-      renderValidatorRows();
+      applyValidatorScoreFilter();
     }
 
     el("validator_astronomy_score_col_header").addEventListener("click", () => {
@@ -1063,6 +1196,7 @@
       try {
         await runQueryWithPreset();
       } catch (err) {
+        allRowsData = [];
         rowsData = [];
         renderRows();
         setStatus("Connected");
@@ -1083,6 +1217,7 @@
         const preset = parsedIdentifierType === "scix_id" ? SCIX_ID_LIST_PRESET : BIBCODE_LIST_PRESET;
         await runQueryWithPreset(preset);
       } catch (err) {
+        allRowsData = [];
         rowsData = [];
         renderRows();
         setStatus("Connected");
@@ -1151,6 +1286,14 @@
       syncIdentifierState();
     });
 
+    el("score_min").addEventListener("input", () => {
+      applyDbScoreFilter();
+    });
+
+    el("score_max").addEventListener("input", () => {
+      applyDbScoreFilter();
+    });
+
     el("identifier_file").addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file) {
@@ -1175,6 +1318,10 @@
       exportValidatorTsv();
     });
 
+    el("validator_curated_export_btn").addEventListener("click", () => {
+      exportCuratedValidatorTsv();
+    });
+
     el("validator_submit_btn").addEventListener("click", () => {
       applyValidatorOverrideUpdate();
     });
@@ -1193,9 +1340,17 @@
       refreshValidatorSelectionDetail();
     });
 
+    el("validator_score_min").addEventListener("input", () => {
+      applyValidatorScoreFilter();
+    });
+
+    el("validator_score_max").addEventListener("input", () => {
+      applyValidatorScoreFilter();
+    });
+
     initSelects();
     buildCategoryChecks("category_checks");
-    buildCategoryChecks("validator_category_checks");
+    buildCategoryChecks("validator_category_checks", VALIDATOR_GROSS_CATEGORIES);
     syncIdentifierState();
     syncValidatorDirtyPill();
   </script>
